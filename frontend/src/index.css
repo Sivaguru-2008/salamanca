@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-bg-primary text-brand-graphite font-sans antialiased min-h-screen flex flex-col;
+    background-color: hsl(38, 25%, 98%);
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-sans;
+  }
+}
+
+/* Custom scrollbars for a premium visual feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(28, 34, 46, 0.15);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 34, 46, 0.3);
+}
+
+/* Custom glow effects for glassmorphic containers */
+.glow-gold {
+  box-shadow: 0 0 20px rgba(192, 154, 95, 0.15);
+}
+
+/* Monaco-style code fonts */
+.font-mono-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Fade animation helper classes */
+.page-fade-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-fade-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms ease-out, transform 300ms ease-out;
+}

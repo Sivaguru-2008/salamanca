@@ -1,0 +1,119 @@
+name: fios
+
+services:
+  api:
+    build:
+      context: ./backend
+    image: fios-api:local
+    container_name: fios-api
+    command: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      FIOS_ENVIRONMENT: development
+      FIOS_DEBUG: "false"
+      FIOS_LOG_JSON: "true"
+      FIOS_LOG_LEVEL: INFO
+      FIOS_POSTGRES_HOST: postgres
+      FIOS_POSTGRES_PORT: "5432"
+      FIOS_POSTGRES_USER: fios
+      FIOS_POSTGRES_PASSWORD: fios
+      FIOS_POSTGRES_DB: fios
+      FIOS_REDIS_HOST: redis
+      FIOS_REDIS_PORT: "6379"
+      FIOS_JWT_SECRET_KEY: local-dev-only-secret-change-me
+      FIOS_CORS_ORIGINS: http://localhost:3000
+      FIOS_RATE_LIMIT_ENABLED: "true"
+      FIOS_OTEL_ENABLED: "false"
+      FIOS_SEED_ADMIN_EMAIL: admin@fios.com
+      FIOS_SEED_ADMIN_PASSWORD: admin-fios-local
+      FIOS_GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      FIOS_GROQ_API_KEY: ${GROQ_API_KEY:-}
+      FIOS_UPLOAD_DIR: /data/uploads
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploadsdata:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: fios-postgres
+    environment:
+      POSTGRES_USER: fios
+      POSTGRES_PASSWORD: fios
+      POSTGRES_DB: fios
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fios -d fios"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: fios-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: fios-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@fios.com
+      PGADMIN_DEFAULT_PASSWORD: admin-fios-local
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmindata:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=http://localhost:8000
+    image: fios-frontend:local
+    container_name: fios-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  pgadmindata:
+  uploadsdata:
