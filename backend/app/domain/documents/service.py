@@ -98,7 +98,7 @@ def score_chunks(query: str, chunks: list[str]) -> list[tuple[int, float]]:
 def cosine_similarity(v1: list[float], v2: list[float]) -> float:
     if not v1 or not v2 or len(v1) != len(v2):
         return 0.0
-    dot = sum(a * b for a, b in zip(v1, v2))
+    dot = sum(a * b for a, b in zip(v1, v2, strict=True))
     norm1 = math.sqrt(sum(a * a for a in v1))
     norm2 = math.sqrt(sum(b * b for b in v2))
     if norm1 == 0 or norm2 == 0:
@@ -134,17 +134,17 @@ class DocumentsService:
             raise BadRequestError("Uploaded file is empty.")
 
         # Signature/MIME Validation
-        if extension in PDF_EXTENSIONS:
-            if not content.startswith(b"%PDF"):
-                raise BadRequestError("Invalid PDF signature or structure.")
-        elif extension in TEXT_EXTENSIONS:
-            if b"\x00" in content:
-                raise BadRequestError("Binary content is not supported for text formats.")
+        if extension in PDF_EXTENSIONS and not content.startswith(b"%PDF"):
+            raise BadRequestError("Invalid PDF signature or structure.")
+        elif extension in TEXT_EXTENSIONS and b"\x00" in content:
+            raise BadRequestError("Binary content is not supported for text formats.")
 
         # Duplicate Detection using SHA-256
         import hashlib
+
         file_hash = hashlib.sha256(content).hexdigest()
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
         existing_docs, _ = await self.financial.documents.list(filters=user_filter, limit=1000)
         for doc in existing_docs:
@@ -160,9 +160,11 @@ class DocumentsService:
 
         # Generate semantic embeddings for each chunk if Gemini is configured
         from app.domain.ai.llm import LLMClient
+
         llm_client = LLMClient(self.settings)
         chunks_data = []
         if llm_client.settings.gemini_api_key:
+
             async def _embed_chunk(i: int, chunk: str) -> dict[str, Any]:
                 try:
                     emb = await llm_client.embed_text(chunk)
@@ -172,7 +174,10 @@ class DocumentsService:
                     return {"index": i, "text": chunk}
 
             import asyncio
-            chunks_data = await asyncio.gather(*[_embed_chunk(i, chunk) for i, chunk in enumerate(chunks)])
+
+            chunks_data = await asyncio.gather(
+                *[_embed_chunk(i, chunk) for i, chunk in enumerate(chunks)]
+            )
         else:
             chunks_data = [{"index": i, "text": chunk} for i, chunk in enumerate(chunks)]
 
@@ -231,6 +236,7 @@ class DocumentsService:
         # Check if chunks have semantic embeddings
         has_embeddings = all("embedding" in c for c in chunks_meta) if chunks_meta else False
         from app.domain.ai.llm import LLMClient
+
         llm_client = LLMClient(self.settings)
 
         scored: list[tuple[int, float]] = []
@@ -260,7 +266,7 @@ class DocumentsService:
                 {
                     "index": index,
                     "text": chunks_meta[index].get("text", ""),
-                    "score": round(score, 4)
+                    "score": round(score, 4),
                 }
                 for index, score in matches
             ],

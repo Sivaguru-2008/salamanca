@@ -88,13 +88,9 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_auth_sessions")),
-        sa.UniqueConstraint(
-            "refresh_token_hash", name=op.f("uq_auth_sessions_refresh_token_hash")
-        ),
+        sa.UniqueConstraint("refresh_token_hash", name=op.f("uq_auth_sessions_refresh_token_hash")),
     )
-    op.create_index(
-        op.f("ix_auth_sessions_user_id"), "auth_sessions", ["user_id"], unique=False
-    )
+    op.create_index(op.f("ix_auth_sessions_user_id"), "auth_sessions", ["user_id"], unique=False)
     op.create_index(
         op.f("ix_auth_sessions_expires_at"), "auth_sessions", ["expires_at"], unique=False
     )

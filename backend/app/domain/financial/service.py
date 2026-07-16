@@ -803,13 +803,12 @@ class FinancialService:
         budget = await self.get_or_create_budget(user_id, month_str)
 
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
-        all_expenses, _ = await self.expenses.list(filters=user_filter, limit=1000, include_deleted=False)
-        user_expenses = [
-            e
-            for e in all_expenses
-            if e.created_at.strftime("%Y-%m") == month_str
-        ]
+        all_expenses, _ = await self.expenses.list(
+            filters=user_filter, limit=1000, include_deleted=False
+        )
+        user_expenses = [e for e in all_expenses if e.created_at.strftime("%Y-%m") == month_str]
 
         util = dict(budget.budget_utilization or {})
         total_util = Decimal("0.00")
@@ -855,6 +854,7 @@ class FinancialService:
     # --- Dashboard Summary ---
     async def get_dashboard_summary(self, user_id: uuid.UUID) -> dict[str, Any]:
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
 
         assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
@@ -903,6 +903,7 @@ class FinancialService:
     # --- Analytics & Cash Flow ---
     async def get_analytics(self, user_id: uuid.UUID) -> dict[str, Any]:
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
         tx_list, _ = await self.transactions.list(filters=user_filter, limit=10000)
         user_txs = tx_list
@@ -961,6 +962,7 @@ class FinancialService:
         }
 
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
 
         assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
@@ -992,6 +994,7 @@ class FinancialService:
     # --- Financial Health Score Engine ---
     async def get_health_score(self, user_id: uuid.UUID) -> dict[str, Any]:
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
 
         incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
@@ -1020,9 +1023,7 @@ class FinancialService:
         )
 
         insurances_list, _ = await self.insurances.list(filters=user_filter, limit=1000)
-        user_ins = [
-            ins for ins in insurances_list if ins.status == "ACTIVE"
-        ]
+        user_ins = [ins for ins in insurances_list if ins.status == "ACTIVE"]
 
         tx_list, _ = await self.transactions.list(filters=user_filter, limit=1000)
         thirty_days_ago = utc_now() - timedelta(days=30)
@@ -1030,8 +1031,7 @@ class FinancialService:
             (
                 t.amount
                 for t in tx_list
-                if t.type == "Investment"
-                and t.transaction_date >= thirty_days_ago
+                if t.type == "Investment" and t.transaction_date >= thirty_days_ago
             ),
             Decimal("0.00"),
         )
@@ -1185,7 +1185,11 @@ class FinancialService:
             "raw_value": (
                 "Health & Life"
                 if (has_health and has_life)
-                else "Health Only" if has_health else "Life Only" if has_life else "None"
+                else "Health Only"
+                if has_health
+                else "Life Only"
+                if has_life
+                else "None"
             ),
             "target": "Health & Life Active",
             "explanation": (

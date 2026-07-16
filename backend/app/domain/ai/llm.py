@@ -5,8 +5,8 @@ dependency surface small. Gemini is preferred when both keys are set.
 """
 
 from __future__ import annotations
-import asyncio
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.core.errors import ServiceUnavailableError
 
 logger = structlog.get_logger(__name__)
+
 
 async def _post_with_retry(
     client: httpx.AsyncClient,
@@ -43,6 +44,7 @@ async def _post_with_retry(
             await asyncio.sleep(delay)
             delay *= backoff_factor
     raise httpx.HTTPError("Max retries exceeded")
+
 
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -200,12 +202,7 @@ class LLMClient:
             raise ValueError("Gemini API key is not configured.")
 
         endpoint = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent"
-        payload = {
-            "model": "models/text-embedding-004",
-            "content": {
-                "parts": [{"text": text}]
-            }
-        }
+        payload = {"model": "models/text-embedding-004", "content": {"parts": [{"text": text}]}}
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
             response = await _post_with_retry(
                 client,
@@ -214,7 +211,9 @@ class LLMClient:
                 json=payload,
             )
             if response.status_code >= 400:
-                raise ValueError(f"Gemini Embedding HTTP {response.status_code}: {response.text[:500]}")
+                raise ValueError(
+                    f"Gemini Embedding HTTP {response.status_code}: {response.text[:500]}"
+                )
             data = response.json()
 
         embedding = data.get("embedding", {}).get("values")
