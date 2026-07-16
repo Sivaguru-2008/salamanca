@@ -66,3 +66,11 @@ services:
           type: redis
           name: fios-redis
           property: connectionString
+      # LLM provider keys for the AI council / loan analysis. sync: false means
+      # Render prompts for the value in the dashboard — never committed to git.
+      # Set at least one (Groq or Gemini); without a key the council answers in
+      # rule-based offline mode.
+      - key: FIOS_GROQ_API_KEY
+        sync: false
+      - key: FIOS_GEMINI_API_KEY
+        sync: false

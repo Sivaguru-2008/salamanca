@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,6 +32,7 @@ from app.core.tasks import BackgroundTaskManager
 from app.domain.auth.service import purge_stale_auth_sessions
 from app.infra.db.session import build_engine, build_sessionmaker
 from app.infra.redis.client import create_redis_client
+from app.infra.redis.memory import MemoryRedis
 
 logger = structlog.get_logger(__name__)
 
@@ -55,7 +57,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Tests may pre-install a redis client (e.g. fakeredis) before startup.
     owns_redis = getattr(app.state, "redis", None) is None
     if owns_redis:
-        app.state.redis = create_redis_client(settings)
+        redis_client = create_redis_client(settings)
+        try:
+            await asyncio.wait_for(redis_client.ping(), timeout=2.0)
+        except Exception as exc:
+            await redis_client.aclose()
+            redis_client = MemoryRedis()
+            logger.warning(
+                "redis_unavailable_using_memory_fallback",
+                dsn=settings.redis_dsn,
+                error=str(exc),
+            )
+        app.state.redis = redis_client
 
     tracer_provider = setup_tracing(app, engine, settings)
 

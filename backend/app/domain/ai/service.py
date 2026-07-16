@@ -13,7 +13,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.domain.ai.llm import LLMClient
+from app.domain.ai.llm import LLMClient, LLMResult
 from app.domain.financial.service import FinancialService
 from app.utils.datetime import utc_now
 
@@ -234,15 +234,28 @@ class ChatService:
         history = await self._load_history(history_key)
         reasoning.append(f"Recalled {len(history)} prior messages from conversation memory.")
 
-        system_prompt = BASE_SYSTEM_PROMPT.format(
-            name=profile["name"],
-            focus=profile["focus"],
-            snapshot=json.dumps(snapshot, indent=2),
-        )
-        result = await self.llm.complete(
-            system_prompt=system_prompt,
-            messages=[*history, {"role": "user", "content": message}],
-        )
+        if self.llm.is_configured:
+            system_prompt = BASE_SYSTEM_PROMPT.format(
+                name=profile["name"],
+                focus=profile["focus"],
+                snapshot=json.dumps(snapshot, indent=2),
+            )
+            result = await self.llm.complete(
+                system_prompt=system_prompt,
+                messages=[*history, {"role": "user", "content": message}],
+            )
+        else:
+            # No LLM provider configured: answer from the live snapshot with a
+            # deterministic summary so the council stays usable offline.
+            result = LLMResult(
+                text=self._offline_reply(profile, snapshot),
+                provider="offline",
+                model="rule-based",
+            )
+            reasoning.append(
+                "No LLM provider configured; generated a rule-based summary "
+                "from the live snapshot."
+            )
         latency_ms = round((time.perf_counter() - started) * 1000)
         reasoning.append(
             f"Generated grounded response with {result.provider}:{result.model} in {latency_ms}ms."
@@ -281,6 +294,72 @@ class ChatService:
             "model": result.model,
             "latency_ms": latency_ms,
         }
+
+    @staticmethod
+    def _offline_reply(profile: dict[str, str], snapshot: dict[str, Any]) -> str:
+        """Grounded, deterministic answer used when no LLM provider is set."""
+
+        def _num(value: Any) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        income = _num(snapshot.get("monthly_income"))
+        expense = _num(snapshot.get("monthly_expense"))
+        surplus = income - expense
+        savings_rate = _num(snapshot.get("monthly_savings_rate")) * 100
+        lines = [
+            f"**{profile['name']} (offline mode)** — here is what your live data shows:",
+            "",
+            f"- Net worth: ${_num(snapshot.get('net_worth')):,.0f} "
+            f"(assets ${_num(snapshot.get('total_assets')):,.0f} vs "
+            f"debts ${_num(snapshot.get('total_liabilities')):,.0f})",
+            f"- Monthly cash flow: ${income:,.0f} in / ${expense:,.0f} out "
+            f"→ ${surplus:,.0f} surplus ({savings_rate:.1f}% savings rate)",
+            f"- Health score: {snapshot.get('health_score', 0)}/100 "
+            f"({snapshot.get('health_grade', 'UNKNOWN')})",
+        ]
+        goals = snapshot.get("savings_goals") or []
+        if goals:
+            lines.append(
+                "- Goals: "
+                + "; ".join(
+                    f"{g['name']} ${_num(g.get('progress')):,.0f} of ${_num(g.get('target')):,.0f}"
+                    for g in goals[:3]
+                )
+            )
+        loans = snapshot.get("loans") or []
+        if loans:
+            lines.append(
+                "- Loans: "
+                + "; ".join(
+                    f"{ln['name']} ${_num(ln.get('outstanding_balance')):,.0f} "
+                    f"at {_num(ln.get('apr')):.1f}% APR"
+                    for ln in loans[:3]
+                )
+            )
+        if income > 0 and surplus < 0:
+            lines.append(
+                "\nYour expenses exceed income — review the largest budget "
+                "categories first and consider trimming recurring costs."
+            )
+        elif income > 0 and savings_rate < 20:
+            lines.append(
+                "\nYour savings rate is below the 20% target — automating a "
+                "transfer on payday is the most reliable fix."
+            )
+        elif income == 0:
+            lines.append(
+                "\nNo income is recorded yet. Save your Monthly Snapshot on the "
+                "Dashboard and the council will ground its analysis in it."
+            )
+        lines.append(
+            "\n_Full conversational answers need an LLM key: set "
+            "`FIOS_GEMINI_API_KEY` or `FIOS_GROQ_API_KEY` in `backend/.env` and "
+            "restart the API._"
+        )
+        return "\n".join(lines)
 
     async def history(
         self, user_id: uuid.UUID, agent: str, conversation_id: str = "default"
