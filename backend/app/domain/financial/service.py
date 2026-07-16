@@ -1180,19 +1180,13 @@ class FinancialService:
         else:
             ins_score = 0
 
-        raw_value = (
-            "Health & Life"
-            if (has_health and has_life)
-            else "Health Only"
-            if has_health
-            else "Life Only"
-            if has_life
-            else "None"
-        )
-
         breakdown["insurance_coverage"] = {
             "score": float(ins_score),
-            "raw_value": raw_value,
+            "raw_value": (
+                "Health & Life"
+                if (has_health and has_life)
+                else "Health Only" if has_health else "Life Only" if has_life else "None"
+            ),
             "target": "Health & Life Active",
             "explanation": (
                 "Well covered."
