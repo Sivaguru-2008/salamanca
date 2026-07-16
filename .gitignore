@@ -34,3 +34,4 @@ Thumbs.db
 openapi.json
 *.log
 *.db
+.vercel
