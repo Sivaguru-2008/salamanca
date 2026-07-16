@@ -11,6 +11,7 @@ import structlog
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from redis.asyncio import Redis
 from sqlalchemy import text
 
 from app.api.health import router as health_router
@@ -57,7 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Tests may pre-install a redis client (e.g. fakeredis) before startup.
     owns_redis = getattr(app.state, "redis", None) is None
     if owns_redis:
-        redis_client = create_redis_client(settings)
+        redis_client: Redis | MemoryRedis = create_redis_client(settings)
         try:
             await asyncio.wait_for(redis_client.ping(), timeout=2.0)
         except Exception as exc:
