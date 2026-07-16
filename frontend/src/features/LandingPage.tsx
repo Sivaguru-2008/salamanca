@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, Sparkles, Shield, Cpu, GitBranch, Terminal } from 'lucide-react';
+import { Cpu, GitBranch, Terminal } from 'lucide-react';
 
 interface LandingPageProps {
   onNavigate: (page: string) => void;

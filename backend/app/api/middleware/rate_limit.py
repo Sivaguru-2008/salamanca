@@ -55,9 +55,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         try:
             redis = request.app.state.redis
             current = await redis.incr(key)
-            if current == 1:
-                await redis.expire(key, window)
             ttl = await redis.ttl(key)
+            if ttl == -1:
+                await redis.expire(key, window)
+                ttl = window
         except RedisError as exc:
             logger.warning("rate_limit_backend_unavailable", error=str(exc))
             return await call_next(request)

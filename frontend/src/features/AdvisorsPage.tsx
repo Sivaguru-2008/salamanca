@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, BrainCircuit, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
+import { Send, BrainCircuit, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
 import { apiService } from '../services/apiService';
 import { AdvisorMessage } from '../types';
 

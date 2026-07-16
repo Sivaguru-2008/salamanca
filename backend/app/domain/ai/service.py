@@ -19,6 +19,14 @@ from app.utils.datetime import utc_now
 
 logger = structlog.get_logger(__name__)
 
+PROMPT_INJECTION_RE = re.compile(
+    r"(?i)\b(ignore\s+(?:the\s+)?(?:above|previous|system|rule|instruction)|"
+    r"you\s+are\s+now\s+(?:a|an)\b|"
+    r"system\s+override\b|"
+    r"override\s+(?:the\s+)?(?:system|rule|instruction)|"
+    r"new\s+instructions\b)"
+)
+
 AGENT_PROFILES: dict[str, dict[str, str]] = {
     "advisor": {
         "name": "Chief Financial Advisor",
@@ -115,10 +123,12 @@ class ChatService:
         financial = FinancialService(self.db)
         summary = await financial.get_dashboard_summary(user_id)
         health = await financial.get_health_score(user_id)
-        loans_list, _ = await financial.loans.list(limit=100)
-        user_loans = [ln for ln in loans_list if ln.user_id == user_id]
-        liabs_list, _ = await financial.liabilities.list(limit=100)
-        user_liabs = [liab for liab in liabs_list if liab.user_id == user_id]
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+        loans_list, _ = await financial.loans.list(filters=user_filter, limit=100)
+        user_loans = loans_list
+        liabs_list, _ = await financial.liabilities.list(filters=user_filter, limit=100)
+        user_liabs = liabs_list
         return {
             "loans": [
                 {
@@ -200,6 +210,10 @@ class ChatService:
         conversation_id: str = "default",
         extra_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if PROMPT_INJECTION_RE.search(message):
+            from app.core.errors import BadRequestError
+            raise BadRequestError("Suspicious input pattern detected. Your message cannot be processed.")
+
         profile = AGENT_PROFILES.get(agent, AGENT_PROFILES["advisor"])
         started = time.perf_counter()
         reasoning: list[str] = []

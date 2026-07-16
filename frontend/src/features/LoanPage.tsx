@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileText, AlertTriangle, ShieldAlert, CheckCircle, Upload } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, CheckCircle, Upload } from 'lucide-react';
 import { apiService } from '../services/apiService';
 import { LoanAnalysis } from '../types';
 

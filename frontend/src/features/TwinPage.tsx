@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, HelpCircle, AlertCircle, ArrowRight } from 'lucide-react';
+import { Sparkles, AlertCircle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { HealthScore } from '../types';
 
@@ -8,7 +8,7 @@ interface TwinPageProps {
   health: HealthScore;
 }
 
-export const TwinPage: React.FC<TwinPageProps> = ({ snapshot, health }) => {
+export const TwinPage: React.FC<TwinPageProps> = ({ snapshot, health: _health }) => {
   const [salaryInc, setSalaryInc] = useState(5); // % annual increase
   const [returnRate, setReturnRate] = useState(7); // % investment returns
   const [emergShock, setEmergShock] = useState(0); // $ cash emergency

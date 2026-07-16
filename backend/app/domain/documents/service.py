@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.errors import (
     BadRequestError,
+    ConflictError,
     NotFoundError,
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
@@ -94,6 +95,17 @@ def score_chunks(query: str, chunks: list[str]) -> list[tuple[int, float]]:
     return scored
 
 
+def cosine_similarity(v1: list[float], v2: list[float]) -> float:
+    if not v1 or not v2 or len(v1) != len(v2):
+        return 0.0
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = math.sqrt(sum(a * a for a in v1))
+    norm2 = math.sqrt(sum(b * b for b in v2))
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot / (norm1 * norm2)
+
+
 class DocumentsService:
     def __init__(self, db: AsyncSession, settings: Settings) -> None:
         self.db = db
@@ -121,12 +133,48 @@ class DocumentsService:
         if not content:
             raise BadRequestError("Uploaded file is empty.")
 
+        # Signature/MIME Validation
+        if extension in PDF_EXTENSIONS:
+            if not content.startswith(b"%PDF"):
+                raise BadRequestError("Invalid PDF signature or structure.")
+        elif extension in TEXT_EXTENSIONS:
+            if b"\x00" in content:
+                raise BadRequestError("Binary content is not supported for text formats.")
+
+        # Duplicate Detection using SHA-256
+        import hashlib
+        file_hash = hashlib.sha256(content).hexdigest()
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+        existing_docs, _ = await self.financial.documents.list(filters=user_filter, limit=1000)
+        for doc in existing_docs:
+            if doc.metadata_json and doc.metadata_json.get("file_hash") == file_hash:
+                raise ConflictError("A document with identical content has already been uploaded.")
+
         stored_name = f"{uuid.uuid4().hex}{extension}"
         target = self._user_dir(user_id) / stored_name
         target.write_bytes(content)
 
         text = self._extract_text(target, extension)
         chunks = chunk_text(text)
+
+        # Generate semantic embeddings for each chunk if Gemini is configured
+        from app.domain.ai.llm import LLMClient
+        llm_client = LLMClient(self.settings)
+        chunks_data = []
+        if llm_client.settings.gemini_api_key:
+            async def _embed_chunk(i: int, chunk: str) -> dict[str, Any]:
+                try:
+                    emb = await llm_client.embed_text(chunk)
+                    return {"index": i, "text": chunk, "embedding": emb}
+                except Exception as exc:
+                    logger.warning("chunk_embedding_failed", index=i, error=str(exc))
+                    return {"index": i, "text": chunk}
+
+            import asyncio
+            chunks_data = await asyncio.gather(*[_embed_chunk(i, chunk) for i, chunk in enumerate(chunks)])
+        else:
+            chunks_data = [{"index": i, "text": chunk} for i, chunk in enumerate(chunks)]
 
         document = await self.financial.create_document(
             user_id,
@@ -139,7 +187,8 @@ class DocumentsService:
                     "content_type": file.content_type,
                     "text_length": len(text),
                     "num_chunks": len(chunks),
-                    "chunks": [{"index": i, "text": chunk} for i, chunk in enumerate(chunks)],
+                    "file_hash": file_hash,
+                    "chunks": chunks_data,
                 },
             },
             actor_id=user_id,
@@ -177,14 +226,42 @@ class DocumentsService:
         self, user_id: uuid.UUID, doc_id: uuid.UUID, query: str, limit: int = 5
     ) -> dict[str, Any]:
         document = await self.get_owned(user_id, doc_id)
-        chunks = [c.get("text", "") for c in (document.metadata_json or {}).get("chunks", [])]
-        matches = score_chunks(query, chunks)[:limit]
+        chunks_meta = (document.metadata_json or {}).get("chunks", [])
+
+        # Check if chunks have semantic embeddings
+        has_embeddings = all("embedding" in c for c in chunks_meta) if chunks_meta else False
+        from app.domain.ai.llm import LLMClient
+        llm_client = LLMClient(self.settings)
+
+        scored: list[tuple[int, float]] = []
+        if has_embeddings and llm_client.settings.gemini_api_key:
+            try:
+                query_emb = await llm_client.embed_text(query)
+                for c in chunks_meta:
+                    similarity = cosine_similarity(query_emb, c["embedding"])
+                    if similarity > 0:
+                        scored.append((c["index"], similarity))
+                scored.sort(key=lambda item: item[1], reverse=True)
+            except Exception as exc:
+                logger.warning("semantic_search_failed_falling_back", error=str(exc))
+                scored = []
+
+        if not scored:
+            # Fallback to lexical term-frequency search
+            chunks = [c.get("text", "") for c in chunks_meta]
+            scored = score_chunks(query, chunks)
+
+        matches = scored[:limit]
         return {
             "document_id": str(document.id),
             "document_name": document.name,
             "query": query,
             "results": [
-                {"index": index, "text": chunks[index], "score": round(score, 4)}
+                {
+                    "index": index,
+                    "text": chunks_meta[index].get("text", ""),
+                    "score": round(score, 4)
+                }
                 for index, score in matches
             ],
         }

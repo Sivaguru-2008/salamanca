@@ -802,11 +802,13 @@ class FinancialService:
     ) -> None:
         budget = await self.get_or_create_budget(user_id, month_str)
 
-        all_expenses, _ = await self.expenses.list(limit=1000, include_deleted=False)
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+        all_expenses, _ = await self.expenses.list(filters=user_filter, limit=1000, include_deleted=False)
         user_expenses = [
             e
             for e in all_expenses
-            if e.user_id == user_id and e.created_at.strftime("%Y-%m") == month_str
+            if e.created_at.strftime("%Y-%m") == month_str
         ]
 
         util = dict(budget.budget_utilization or {})
@@ -852,37 +854,40 @@ class FinancialService:
 
     # --- Dashboard Summary ---
     async def get_dashboard_summary(self, user_id: uuid.UUID) -> dict[str, Any]:
-        assets_list, _ = await self.assets.list(limit=1000)
-        user_assets = [a for a in assets_list if a.user_id == user_id]
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+
+        assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
+        user_assets = assets_list
         total_assets = sum((a.current_value for a in user_assets), Decimal("0.00"))
 
-        liabs_list, _ = await self.liabilities.list(limit=1000)
-        user_liabs = [liab for liab in liabs_list if liab.user_id == user_id]
+        liabs_list, _ = await self.liabilities.list(filters=user_filter, limit=1000)
+        user_liabs = liabs_list
         total_liabs = sum((liab.outstanding_balance for liab in user_liabs), Decimal("0.00"))
 
-        loans_list, _ = await self.loans.list(limit=1000)
-        user_loans = [ln for ln in loans_list if ln.user_id == user_id and ln.status == "ACTIVE"]
+        loans_list, _ = await self.loans.list(filters=user_filter, limit=1000)
+        user_loans = [ln for ln in loans_list if ln.status == "ACTIVE"]
         total_loans = sum((ln.outstanding_balance for ln in user_loans), Decimal("0.00"))
 
         net_worth = total_assets - (total_liabs + total_loans)
 
-        incomes_list, _ = await self.incomes.list(limit=1000)
-        user_incomes = [i for i in incomes_list if i.user_id == user_id]
+        incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
+        user_incomes = incomes_list
         monthly_income = sum((i.normalized_monthly_amount for i in user_incomes), Decimal("0.00"))
 
-        expenses_list, _ = await self.expenses.list(limit=1000)
-        user_expenses = [e for e in expenses_list if e.user_id == user_id]
+        expenses_list, _ = await self.expenses.list(filters=user_filter, limit=1000)
+        user_expenses = expenses_list
         monthly_expense = sum((e.normalized_monthly_amount for e in user_expenses), Decimal("0.00"))
 
         savings_rate = 0.0
         if monthly_income > 0:
             savings_rate = float((monthly_income - monthly_expense) / monthly_income)
 
-        tx_list, _ = await self.transactions.list(limit=5, sort=[])
-        user_tx = [t for t in tx_list if t.user_id == user_id]
+        tx_list, _ = await self.transactions.list(filters=user_filter, limit=5, sort=[])
+        user_tx = tx_list
 
-        sg_list, _ = await self.savings_goals.list(limit=100)
-        user_sg = [sg for sg in sg_list if sg.user_id == user_id]
+        sg_list, _ = await self.savings_goals.list(filters=user_filter, limit=100)
+        user_sg = sg_list
 
         return {
             "net_worth": net_worth,
@@ -897,8 +902,10 @@ class FinancialService:
 
     # --- Analytics & Cash Flow ---
     async def get_analytics(self, user_id: uuid.UUID) -> dict[str, Any]:
-        tx_list, _ = await self.transactions.list(limit=10000)
-        user_txs = [t for t in tx_list if t.user_id == user_id]
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+        tx_list, _ = await self.transactions.list(filters=user_filter, limit=10000)
+        user_txs = tx_list
 
         monthly: dict[str, dict[str, Decimal]] = {}
         for tx in user_txs:
@@ -953,21 +960,24 @@ class FinancialService:
             for y, val in yearly_res.items()
         }
 
-        assets_list, _ = await self.assets.list(limit=1000)
-        user_assets = [a for a in assets_list if a.user_id == user_id]
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+
+        assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
+        user_assets = assets_list
         asset_alloc: dict[str, Decimal] = {}
         for a in user_assets:
             asset_alloc[a.type] = asset_alloc.get(a.type, Decimal("0.00")) + a.current_value
 
-        liabs_list, _ = await self.liabilities.list(limit=1000)
-        user_liabs = [liab for liab in liabs_list if liab.user_id == user_id]
+        liabs_list, _ = await self.liabilities.list(filters=user_filter, limit=1000)
+        user_liabs = liabs_list
         liab_alloc: dict[str, Decimal] = {}
         for liab in user_liabs:
             curr_val = liab_alloc.get(liab.type, Decimal("0.00"))
             liab_alloc[liab.type] = curr_val + liab.outstanding_balance
 
-        loans_list, _ = await self.loans.list(limit=1000)
-        user_loans = [ln for ln in loans_list if ln.user_id == user_id and ln.status == "ACTIVE"]
+        loans_list, _ = await self.loans.list(filters=user_filter, limit=1000)
+        user_loans = [ln for ln in loans_list if ln.status == "ACTIVE"]
         for ln in user_loans:
             liab_alloc[ln.type] = liab_alloc.get(ln.type, Decimal("0.00")) + ln.outstanding_balance
 
@@ -981,44 +991,46 @@ class FinancialService:
 
     # --- Financial Health Score Engine ---
     async def get_health_score(self, user_id: uuid.UUID) -> dict[str, Any]:
-        incomes_list, _ = await self.incomes.list(limit=1000)
-        user_incomes = [i for i in incomes_list if i.user_id == user_id]
+        from app.core.filtering import FieldFilter, FilterOperator
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+
+        incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
+        user_incomes = incomes_list
         monthly_income = sum((i.normalized_monthly_amount for i in user_incomes), Decimal("0.00"))
         if monthly_income == 0:
             monthly_income = Decimal("1.00")
 
-        expenses_list, _ = await self.expenses.list(limit=1000)
-        user_expenses = [e for e in expenses_list if e.user_id == user_id]
+        expenses_list, _ = await self.expenses.list(filters=user_filter, limit=1000)
+        user_expenses = expenses_list
         monthly_expense = sum((e.normalized_monthly_amount for e in user_expenses), Decimal("0.00"))
 
-        loans_list, _ = await self.loans.list(limit=1000)
-        user_loans = [ln for ln in loans_list if ln.user_id == user_id and ln.status == "ACTIVE"]
+        loans_list, _ = await self.loans.list(filters=user_filter, limit=1000)
+        user_loans = [ln for ln in loans_list if ln.status == "ACTIVE"]
         total_loan_emi = sum((ln.emi for ln in user_loans), Decimal("0.00"))
 
-        liabs_list, _ = await self.liabilities.list(limit=1000)
-        user_liabs = [liab for liab in liabs_list if liab.user_id == user_id]
+        liabs_list, _ = await self.liabilities.list(filters=user_filter, limit=1000)
+        user_liabs = liabs_list
         total_liab_bal = sum((liab.outstanding_balance for liab in user_liabs), Decimal("0.00"))
 
-        assets_list, _ = await self.assets.list(limit=1000)
-        user_assets = [a for a in assets_list if a.user_id == user_id]
+        assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
+        user_assets = assets_list
         liquid_assets = sum(
             (a.current_value for a in user_assets if a.type in ("Cash", "Bank accounts")),
             Decimal("0.00"),
         )
 
-        insurances_list, _ = await self.insurances.list(limit=1000)
+        insurances_list, _ = await self.insurances.list(filters=user_filter, limit=1000)
         user_ins = [
-            ins for ins in insurances_list if ins.user_id == user_id and ins.status == "ACTIVE"
+            ins for ins in insurances_list if ins.status == "ACTIVE"
         ]
 
-        tx_list, _ = await self.transactions.list(limit=1000)
+        tx_list, _ = await self.transactions.list(filters=user_filter, limit=1000)
         thirty_days_ago = utc_now() - timedelta(days=30)
         recent_investments = sum(
             (
                 t.amount
                 for t in tx_list
-                if t.user_id == user_id
-                and t.type == "Investment"
+                if t.type == "Investment"
                 and t.transaction_date >= thirty_days_ago
             ),
             Decimal("0.00"),

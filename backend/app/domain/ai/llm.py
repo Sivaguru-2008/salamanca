@@ -5,6 +5,7 @@ dependency surface small. Gemini is preferred when both keys are set.
 """
 
 from __future__ import annotations
+import asyncio
 
 from dataclasses import dataclass
 from typing import Any
@@ -16,6 +17,32 @@ from app.core.config import Settings
 from app.core.errors import ServiceUnavailableError
 
 logger = structlog.get_logger(__name__)
+
+async def _post_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    json: dict[str, Any] | None = None,
+    retries: int = 2,
+    initial_delay: float = 0.5,
+    backoff_factor: float = 2.0,
+) -> httpx.Response:
+    delay = initial_delay
+    for attempt in range(retries + 1):
+        try:
+            response = await client.post(url, params=params, headers=headers, json=json)
+            if response.status_code >= 500:
+                response.raise_for_status()
+            return response
+        except (httpx.HTTPError, httpx.TimeoutException) as exc:
+            if attempt == retries:
+                raise
+            logger.warning("llm_http_call_failed_retrying", attempt=attempt, error=str(exc))
+            await asyncio.sleep(delay)
+            delay *= backoff_factor
+    raise httpx.HTTPError("Max retries exceeded")
 
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -110,7 +137,8 @@ class LLMClient:
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
-            response = await client.post(
+            response = await _post_with_retry(
+                client,
                 GEMINI_ENDPOINT.format(model=model),
                 params={"key": self.settings.gemini_api_key},
                 json=payload,
@@ -148,7 +176,8 @@ class LLMClient:
             payload["response_format"] = {"type": "json_object"}
 
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
-            response = await client.post(
+            response = await _post_with_retry(
+                client,
                 GROQ_ENDPOINT,
                 headers={"Authorization": f"Bearer {self.settings.groq_api_key}"},
                 json=payload,
@@ -164,3 +193,31 @@ class LLMClient:
         if not text:
             raise ValueError("Groq returned an empty completion.")
         return LLMResult(text=text, provider="groq", model=model)
+
+    async def embed_text(self, text: str) -> list[float]:
+        """Generate embedding vector using Gemini's text-embedding-004 model."""
+        if not self.settings.gemini_api_key:
+            raise ValueError("Gemini API key is not configured.")
+
+        endpoint = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent"
+        payload = {
+            "model": "models/text-embedding-004",
+            "content": {
+                "parts": [{"text": text}]
+            }
+        }
+        async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
+            response = await _post_with_retry(
+                client,
+                endpoint,
+                params={"key": self.settings.gemini_api_key},
+                json=payload,
+            )
+            if response.status_code >= 400:
+                raise ValueError(f"Gemini Embedding HTTP {response.status_code}: {response.text[:500]}")
+            data = response.json()
+
+        embedding = data.get("embedding", {}).get("values")
+        if not embedding:
+            raise ValueError("Gemini Embedding API returned no values.")
+        return [float(v) for v in embedding]

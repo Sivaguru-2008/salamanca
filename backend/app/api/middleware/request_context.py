@@ -35,16 +35,14 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         try:
             response = await call_next(request)
+            response.headers[REQUEST_ID_HEADER] = request_id
+            if request.url.path not in _QUIET_PATHS:
+                logger.info(
+                    "request_completed",
+                    status_code=response.status_code,
+                    duration_ms=round((time.perf_counter() - start) * 1000, 2),
+                    client=request.client.host if request.client else None,
+                )
+            return response
         finally:
-            duration_ms = round((time.perf_counter() - start) * 1000, 2)
-
-        response.headers[REQUEST_ID_HEADER] = request_id
-        if request.url.path not in _QUIET_PATHS:
-            logger.info(
-                "request_completed",
-                status_code=response.status_code,
-                duration_ms=duration_ms,
-                client=request.client.host if request.client else None,
-            )
-        structlog.contextvars.clear_contextvars()
-        return response
+            structlog.contextvars.clear_contextvars()

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Key, Plus, Trash2, FileText, Search, Upload, X, Loader2, RefreshCw, ShieldCheck,
+  Key, Plus, Trash2, FileText, Search, Upload, Loader2, RefreshCw, ShieldCheck,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
