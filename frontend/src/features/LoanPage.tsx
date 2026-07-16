@@ -1,13 +1,52 @@
-import React, { useState } from 'react';
-import { AlertTriangle, ShieldAlert, CheckCircle, Upload } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { AlertTriangle, ShieldAlert, CheckCircle, Upload, FileUp, Loader2 } from 'lucide-react';
 import { apiService } from '../services/apiService';
 import { LoanAnalysis } from '../types';
+
+const TEXT_EXTENSIONS = ['txt', 'md', 'csv', 'json', 'log', 'tsv'];
 
 export const LoanPage: React.FC = () => {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<LoanAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importedName, setImportedName] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const importFile = async (file: File) => {
+    setImporting(true);
+    setError(null);
+    setImportedName(null);
+    try {
+      const extension = file.name.split('.').pop()?.toLowerCase() || '';
+      let extracted = '';
+      if (TEXT_EXTENSIONS.includes(extension)) {
+        extracted = await file.text();
+      } else if (extension === 'pdf') {
+        // The backend document pipeline extracts and chunks PDF text.
+        const doc = await apiService.uploadDocument(file);
+        extracted = doc.chunks.map((chunk) => chunk.text).join('\n\n');
+      } else {
+        throw new Error(
+          `Unsupported file type ".${extension}". Upload a PDF or a plain-text file (${TEXT_EXTENSIONS.join(', ')}).`,
+        );
+      }
+      if (!extracted.trim()) {
+        throw new Error(
+          'No text could be extracted from this file. If it is a scanned PDF, paste the text manually.',
+        );
+      }
+      setText(extracted.trim());
+      setImportedName(file.name);
+      setAnalysis(null);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || (e instanceof Error ? e.message : 'File import failed.'));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const handleLoadSample = () => {
     setText(`LOAN AGREEMENT AND TERM SHEET
@@ -50,24 +89,57 @@ Arbitration: Borrower agrees to settle any dispute via binding arbitration, waiv
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
         {/* Input Panel */}
-        <div className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium flex flex-col min-h-[460px]">
-          <div className="flex justify-between items-center mb-4">
+        <div
+          className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium flex flex-col min-h-[460px]"
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            if (e.dataTransfer.files.length) importFile(e.dataTransfer.files[0]);
+          }}
+        >
+          <div className="flex justify-between items-center mb-4 gap-3 flex-wrap">
             <span className="text-[11px] font-bold text-[#c09a5f] uppercase tracking-wider">Loan Agreement Text</span>
-            <button 
-              onClick={handleLoadSample}
-              className="text-[10px] font-bold uppercase tracking-wider text-[#c09a5f] hover:text-[#ad8449]"
-            >
-              Load Sample Document
-            </button>
+            <div className="flex items-center gap-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={`.pdf,${TEXT_EXTENSIONS.map((ext) => `.${ext}`).join(',')}`}
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) importFile(e.target.files[0]);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#c09a5f] hover:text-[#ad8449] disabled:opacity-40"
+              >
+                {importing ? <Loader2 size={12} className="animate-spin" /> : <FileUp size={12} />}
+                {importing ? 'Extracting…' : 'Upload File'}
+              </button>
+              <button
+                onClick={handleLoadSample}
+                className="text-[10px] font-bold uppercase tracking-wider text-[#c09a5f] hover:text-[#ad8449]"
+              >
+                Load Sample Document
+              </button>
+            </div>
           </div>
           <textarea
-            className="flex-1 w-full min-h-[280px] text-xs bg-black/5 border border-transparent rounded-lg p-4 outline-none focus:bg-white focus:border-[#c09a5f]/45 resize-none leading-relaxed transition-all"
-            placeholder="Paste the full text of the agreement here..."
+            className={`flex-1 w-full min-h-[280px] text-xs bg-black/5 border rounded-lg p-4 outline-none focus:bg-white focus:border-[#c09a5f]/45 resize-none leading-relaxed transition-all ${
+              dragOver ? 'border-[#c09a5f] bg-[#c09a5f]/5 border-dashed' : 'border-transparent'
+            }`}
+            placeholder="Paste the full text of the agreement here, drop a file, or click Upload File (PDF, TXT, MD)..."
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
-          <div className="flex justify-between items-center mt-5">
-            <span className="text-[10px] text-brand-graphite/40">{text.length} characters</span>
+          <div className="flex justify-between items-center mt-5 gap-3">
+            <span className="text-[10px] text-brand-graphite/40">
+              {importedName ? `${importedName} · ` : ''}{text.length} characters
+            </span>
             <button
               onClick={handleAnalyze}
               disabled={!text.trim() || loading}

@@ -25,15 +25,20 @@ async def _auth(client: AsyncClient, email: str) -> dict[str, str]:
 
 
 class TestChat:
-    async def test_chat_unconfigured_returns_503(self, client: AsyncClient) -> None:
+    async def test_chat_unconfigured_falls_back_to_offline_reply(
+        self, client: AsyncClient
+    ) -> None:
         headers = await _auth(client, "chat503@example.com")
         response = await client.post(
             "/api/v1/chat",
             json={"agent": "budget", "message": "How is my budget?"},
             headers=headers,
         )
-        assert response.status_code == 503
-        assert "LLM" in response.json()["detail"]
+        assert response.status_code == 200
+        body = response.json()
+        assert body["provider"] == "offline"
+        assert body["model"] == "rule-based"
+        assert "offline mode" in body["text"]
 
     async def test_chat_requires_auth(self, client: AsyncClient) -> None:
         response = await client.post("/api/v1/chat", json={"message": "hi"})

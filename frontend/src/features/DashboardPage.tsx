@@ -9,7 +9,7 @@ interface DashboardPageProps {
   health: HealthScore;
   snapshot: any;
   onSnapshotChange: (field: string, value: number) => void;
-  onSaveSnapshot: () => void;
+  onSaveSnapshot: () => Promise<void>;
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
@@ -45,13 +45,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     return points;
   }, [analytics, summary]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaveStatus('Saving...');
-    onSaveSnapshot();
-    setTimeout(() => {
+    try {
+      await onSaveSnapshot();
       setSaveStatus('Saved to DB');
-      setTimeout(() => setSaveStatus('Save snapshot'), 1200);
-    }, 600);
+    } catch {
+      setSaveStatus('Save failed — retry');
+    }
+    setTimeout(() => setSaveStatus('Save snapshot'), 1800);
   };
 
   const getGradeColor = (grade: string) => {

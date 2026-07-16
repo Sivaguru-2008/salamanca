@@ -35,3 +35,4 @@ openapi.json
 *.log
 *.db
 .vercel
+backend/uploads/

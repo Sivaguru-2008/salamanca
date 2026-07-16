@@ -44,7 +44,9 @@ export const tokenStore = {
 
 export const client = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 20_000,
+  // Council chat / loan analysis can take up to FIOS_LLM_TIMEOUT_SECONDS (45s)
+  // on the backend, so the client deadline must sit above it.
+  timeout: 60_000,
   headers: {
     'Content-Type': 'application/json',
   },
