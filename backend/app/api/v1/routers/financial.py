@@ -76,6 +76,7 @@ async def update_profile(
 @router.get("/incomes", response_model=list[IncomeRead], summary="List user incomes")
 async def list_incomes(user: CurrentUser, db: DbSession) -> list[IncomeRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     incomes, _ = await FinancialService(db).incomes.list(filters=user_filter, limit=1000)
     return [IncomeRead.model_validate(i) for i in incomes]
@@ -123,6 +124,7 @@ async def delete_income(income_id: uuid.UUID, user: CurrentUser, db: DbSession) 
 @router.get("/expenses", response_model=list[ExpenseRead], summary="List user expenses")
 async def list_expenses(user: CurrentUser, db: DbSession) -> list[ExpenseRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     expenses, _ = await FinancialService(db).expenses.list(filters=user_filter, limit=1000)
     return [ExpenseRead.model_validate(e) for e in expenses]
@@ -170,6 +172,7 @@ async def delete_expense(expense_id: uuid.UUID, user: CurrentUser, db: DbSession
 @router.get("/assets", response_model=list[AssetRead], summary="List user assets")
 async def list_assets(user: CurrentUser, db: DbSession) -> list[AssetRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     assets, _ = await FinancialService(db).assets.list(filters=user_filter, limit=1000)
     return [AssetRead.model_validate(a) for a in assets]
@@ -210,6 +213,7 @@ async def delete_asset(asset_id: uuid.UUID, user: CurrentUser, db: DbSession) ->
 @router.get("/liabilities", response_model=list[LiabilityRead], summary="List user liabilities")
 async def list_liabilities(user: CurrentUser, db: DbSession) -> list[LiabilityRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     liabs, _ = await FinancialService(db).liabilities.list(filters=user_filter, limit=1000)
     return [LiabilityRead.model_validate(liab) for liab in liabs]
@@ -263,6 +267,7 @@ async def delete_liability(liability_id: uuid.UUID, user: CurrentUser, db: DbSes
 @router.get("/loans", response_model=list[LoanRead], summary="List user loans")
 async def list_loans(user: CurrentUser, db: DbSession) -> list[LoanRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     loans, _ = await FinancialService(db).loans.list(filters=user_filter, limit=1000)
     return [LoanRead.model_validate(ln) for ln in loans]
@@ -303,6 +308,7 @@ async def delete_loan(loan_id: uuid.UUID, user: CurrentUser, db: DbSession) -> N
 @router.get("/insurances", response_model=list[InsuranceRead], summary="List user insurances")
 async def list_insurances(user: CurrentUser, db: DbSession) -> list[InsuranceRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     ins, _ = await FinancialService(db).insurances.list(filters=user_filter, limit=1000)
     return [InsuranceRead.model_validate(i) for i in ins]
@@ -354,6 +360,7 @@ async def delete_insurance(insurance_id: uuid.UUID, user: CurrentUser, db: DbSes
 @router.get("/investments", response_model=list[InvestmentRead], summary="List user investments")
 async def list_investments(user: CurrentUser, db: DbSession) -> list[InvestmentRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     invs, _ = await FinancialService(db).investments.list(filters=user_filter, limit=1000)
     return [InvestmentRead.model_validate(i) for i in invs]
@@ -413,6 +420,7 @@ async def delete_investment(investment_id: uuid.UUID, user: CurrentUser, db: DbS
 )
 async def list_savings_goals(user: CurrentUser, db: DbSession) -> list[SavingsGoalRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     goals, _ = await FinancialService(db).savings_goals.list(filters=user_filter, limit=1000)
     return [SavingsGoalRead.model_validate(g) for g in goals]
@@ -472,6 +480,7 @@ async def delete_savings_goal(goal_id: uuid.UUID, user: CurrentUser, db: DbSessi
 )
 async def list_documents(user: CurrentUser, db: DbSession) -> list[FinancialDocumentRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     docs, _ = await FinancialService(db).documents.list(filters=user_filter, limit=1000)
     return [FinancialDocumentRead.model_validate(d) for d in docs]
@@ -531,6 +540,7 @@ async def delete_document(doc_id: uuid.UUID, user: CurrentUser, db: DbSession) -
 @router.get("/transactions", response_model=list[TransactionRead], summary="List user transactions")
 async def list_transactions(user: CurrentUser, db: DbSession) -> list[TransactionRead]:
     from app.core.filtering import FieldFilter, FilterOperator
+
     user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user.id))]
     txs, _ = await FinancialService(db).transactions.list(filters=user_filter, limit=1000)
     return [TransactionRead.model_validate(t) for t in txs]

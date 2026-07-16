@@ -124,6 +124,7 @@ class ChatService:
         summary = await financial.get_dashboard_summary(user_id)
         health = await financial.get_health_score(user_id)
         from app.core.filtering import FieldFilter, FilterOperator
+
         user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
         loans_list, _ = await financial.loans.list(filters=user_filter, limit=100)
         user_loans = loans_list
@@ -212,7 +213,10 @@ class ChatService:
     ) -> dict[str, Any]:
         if PROMPT_INJECTION_RE.search(message):
             from app.core.errors import BadRequestError
-            raise BadRequestError("Suspicious input pattern detected. Your message cannot be processed.")
+
+            raise BadRequestError(
+                "Suspicious input pattern detected. Your message cannot be processed."
+            )
 
         profile = AGENT_PROFILES.get(agent, AGENT_PROFILES["advisor"])
         started = time.perf_counter()
