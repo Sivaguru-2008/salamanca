@@ -299,9 +299,7 @@ class FinancialService:
         if "outstanding_balance" in values:
             bal = Decimal(str(values["outstanding_balance"]))
             if bal < 0:
-                raise ValidationAppError(
-                    "Liability outstanding balance cannot be negative."
-                )
+                raise ValidationAppError("Liability outstanding balance cannot be negative.")
         if values:
             values["updated_by"] = actor_id or user_id
             await self.liabilities.update(liability, **values)
@@ -459,9 +457,7 @@ class FinancialService:
             type=data["type"],
             amount_invested=amt,
             current_value=val,
-            quantity=(
-                Decimal(str(data["quantity"])) if data.get("quantity") is not None else None
-            ),
+            quantity=Decimal(str(data["quantity"])) if data.get("quantity") is not None else None,
             purchase_price=(
                 Decimal(str(data["purchase_price"]))
                 if data.get("purchase_price") is not None
@@ -808,9 +804,7 @@ class FinancialService:
 
         from app.core.filtering import FieldFilter, FilterOperator
 
-        user_filter = [
-            FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))
-        ]
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
         all_expenses, _ = await self.expenses.list(
             filters=user_filter, limit=1000, include_deleted=False
         )
@@ -861,9 +855,7 @@ class FinancialService:
     async def get_dashboard_summary(self, user_id: uuid.UUID) -> dict[str, Any]:
         from app.core.filtering import FieldFilter, FilterOperator
 
-        user_filter = [
-            FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))
-        ]
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
 
         assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
         user_assets = assets_list
@@ -881,15 +873,11 @@ class FinancialService:
 
         incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
         user_incomes = incomes_list
-        monthly_income = sum(
-            (i.normalized_monthly_amount for i in user_incomes), Decimal("0.00")
-        )
+        monthly_income = sum((i.normalized_monthly_amount for i in user_incomes), Decimal("0.00"))
 
         expenses_list, _ = await self.expenses.list(filters=user_filter, limit=1000)
         user_expenses = expenses_list
-        monthly_expense = sum(
-            (e.normalized_monthly_amount for e in user_expenses), Decimal("0.00")
-        )
+        monthly_expense = sum((e.normalized_monthly_amount for e in user_expenses), Decimal("0.00"))
 
         savings_rate = 0.0
         if monthly_income > 0:
@@ -916,9 +904,7 @@ class FinancialService:
     async def get_analytics(self, user_id: uuid.UUID) -> dict[str, Any]:
         from app.core.filtering import FieldFilter, FilterOperator
 
-        user_filter = [
-            FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))
-        ]
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
         tx_list, _ = await self.transactions.list(filters=user_filter, limit=10000)
         user_txs = tx_list
 
@@ -977,9 +963,7 @@ class FinancialService:
 
         from app.core.filtering import FieldFilter, FilterOperator
 
-        user_filter = [
-            FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))
-        ]
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
 
         assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
         user_assets = assets_list
@@ -1011,23 +995,17 @@ class FinancialService:
     async def get_health_score(self, user_id: uuid.UUID) -> dict[str, Any]:
         from app.core.filtering import FieldFilter, FilterOperator
 
-        user_filter = [
-            FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))
-        ]
+        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
 
         incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
         user_incomes = incomes_list
-        monthly_income = sum(
-            (i.normalized_monthly_amount for i in user_incomes), Decimal("0.00")
-        )
+        monthly_income = sum((i.normalized_monthly_amount for i in user_incomes), Decimal("0.00"))
         if monthly_income == 0:
             monthly_income = Decimal("1.00")
 
         expenses_list, _ = await self.expenses.list(filters=user_filter, limit=1000)
         user_expenses = expenses_list
-        monthly_expense = sum(
-            (e.normalized_monthly_amount for e in user_expenses), Decimal("0.00")
-        )
+        monthly_expense = sum((e.normalized_monthly_amount for e in user_expenses), Decimal("0.00"))
 
         loans_list, _ = await self.loans.list(filters=user_filter, limit=1000)
         user_loans = [ln for ln in loans_list if ln.status == "ACTIVE"]
@@ -1127,9 +1105,7 @@ class FinancialService:
             )
 
         # Metric C: Emergency Fund Coverage (Weight: 20%)
-        month_exp_divisor = (
-            monthly_expense if monthly_expense > 0 else Decimal("1000.00")
-        )
+        month_exp_divisor = monthly_expense if monthly_expense > 0 else Decimal("1000.00")
         emergency_months = liquid_assets / month_exp_divisor
         if emergency_months >= 6:
             em_score = 100
