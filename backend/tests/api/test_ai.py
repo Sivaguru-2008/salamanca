@@ -25,9 +25,7 @@ async def _auth(client: AsyncClient, email: str) -> dict[str, str]:
 
 
 class TestChat:
-    async def test_chat_unconfigured_falls_back_to_offline_reply(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_chat_unconfigured_falls_back_to_offline_reply(self, client: AsyncClient) -> None:
         headers = await _auth(client, "chat503@example.com")
         response = await client.post(
             "/api/v1/chat",
