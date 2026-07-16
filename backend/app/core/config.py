@@ -95,7 +95,11 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://salamanca-one.vercel.app",
+        ]
     )
     cors_allow_credentials: bool = True
 
