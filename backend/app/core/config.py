@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     def sqlalchemy_database_uri(self) -> str:
         if self.database_url:
             return self.database_url
+        if self.environment in (Environment.DEVELOPMENT, Environment.TESTING):
+            if not os.getenv("FIOS_DATABASE_URL") and not os.getenv("FIOS_POSTGRES_HOST"):
+                return "sqlite+aiosqlite:///salamanca.db"
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

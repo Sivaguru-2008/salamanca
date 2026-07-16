@@ -46,6 +46,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = engine
     app.state.db_sessionmaker = sessionmaker
 
+    if settings.sqlalchemy_database_uri.startswith("sqlite"):
+        from app.infra.db.base import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
     # Tests may pre-install a redis client (e.g. fakeredis) before startup.
     owns_redis = getattr(app.state, "redis", None) is None
     if owns_redis:

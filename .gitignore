@@ -33,3 +33,4 @@ Thumbs.db
 # Runtime artifacts
 openapi.json
 *.log
+*.db
