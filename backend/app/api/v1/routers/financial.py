@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.api.v1.schemas.common import PROBLEM_RESPONSES
@@ -18,6 +18,8 @@ from app.api.v1.schemas.financial import (
     ExpenseCreate,
     ExpenseRead,
     ExpenseUpdate,
+    FinancialDataRead,
+    FinancialDataWrite,
     FinancialDocumentCreate,
     FinancialDocumentRead,
     FinancialDocumentUpdate,
@@ -43,6 +45,7 @@ from app.api.v1.schemas.financial import (
     SavingsGoalRead,
     SavingsGoalUpdate,
     TransactionCreate,
+    TransactionPage,
     TransactionRead,
     TransactionUpdate,
 )
@@ -70,6 +73,31 @@ async def update_profile(
         user.id, payload.model_dump(exclude_unset=True), actor_id=user.id
     )
     return FinancialProfileRead.model_validate(profile)
+
+
+# --- Financial Data Upload ---
+@router.get(
+    "/financial-data",
+    response_model=FinancialDataRead,
+    summary="Get the user's stored monthly financial figures",
+)
+async def get_financial_data(user: CurrentUser, db: DbSession) -> FinancialDataRead:
+    data = await FinancialService(db).get_financial_data(user.id)
+    return FinancialDataRead.model_validate(data)
+
+
+@router.put(
+    "/financial-data",
+    response_model=FinancialDataRead,
+    summary="Upload or update the user's monthly financial figures",
+)
+async def save_financial_data(
+    payload: FinancialDataWrite, user: CurrentUser, db: DbSession
+) -> FinancialDataRead:
+    data = await FinancialService(db).save_financial_data(
+        user.id, payload.model_dump(), actor_id=user.id
+    )
+    return FinancialDataRead.model_validate(data)
 
 
 # --- Incomes ---
@@ -559,6 +587,35 @@ async def create_transaction(
         user.id, payload.model_dump(), actor_id=user.id
     )
     return TransactionRead.model_validate(tx)
+
+
+@router.get(
+    "/transactions/query",
+    response_model=TransactionPage,
+    summary="Search, filter, sort and paginate the transaction ledger",
+)
+async def query_transactions(
+    user: CurrentUser,
+    db: DbSession,
+    search: str | None = Query(default=None, max_length=100, description="Matches description"),
+    category: str | None = Query(default=None, max_length=100),
+    type: str | None = Query(default=None, max_length=50, description="Income, Expense, ..."),
+    sort_by: str = Query(default="transaction_date"),
+    sort_dir: str = Query(default="desc", pattern="^(asc|desc)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+) -> TransactionPage:
+    result = await FinancialService(db).query_transactions(
+        user.id,
+        search=search,
+        category=category,
+        tx_type=type,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        page=page,
+        page_size=page_size,
+    )
+    return TransactionPage.model_validate(result)
 
 
 @router.get(

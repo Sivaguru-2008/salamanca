@@ -67,6 +67,14 @@ class LLMClient:
     def is_configured(self) -> bool:
         return bool(self.settings.gemini_api_key or self.settings.groq_api_key)
 
+    def supports(self, provider: str | None = None) -> bool:
+        """Whether ``provider`` has a key; ``None`` asks about any provider."""
+        if provider == "gemini":
+            return bool(self.settings.gemini_api_key)
+        if provider == "groq":
+            return bool(self.settings.groq_api_key)
+        return self.is_configured
+
     async def complete(
         self,
         *,
@@ -75,15 +83,21 @@ class LLMClient:
         temperature: float = 0.4,
         max_tokens: int = 1024,
         json_mode: bool = False,
+        provider: str | None = None,
     ) -> LLMResult:
-        """Run a chat completion over ``{"role": "user"|"assistant", "content": str}`` turns."""
-        if not self.is_configured:
+        """Run a chat completion over ``{"role": "user"|"assistant", "content": str}`` turns.
+
+        ``provider`` pins the call to one backend ("gemini" or "groq") for
+        callers that need a specific model rather than the best available.
+        The default tries Gemini and falls back to Groq.
+        """
+        if not self.supports(provider):
             raise ServiceUnavailableError(
                 "No LLM provider configured. Set FIOS_GEMINI_API_KEY or FIOS_GROQ_API_KEY."
             )
 
         errors: list[str] = []
-        if self.settings.gemini_api_key:
+        if provider in (None, "gemini") and self.settings.gemini_api_key:
             try:
                 return await self._gemini(
                     system_prompt=system_prompt,
@@ -95,7 +109,7 @@ class LLMClient:
             except Exception as exc:
                 logger.warning("gemini_call_failed", error=str(exc))
                 errors.append(f"gemini: {exc}")
-        if self.settings.groq_api_key:
+        if provider in (None, "groq") and self.settings.groq_api_key:
             try:
                 return await self._groq(
                     system_prompt=system_prompt,

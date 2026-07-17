@@ -1,5 +1,6 @@
 import { AxiosProgressEvent } from 'axios';
 import { apiRequest, client, tokenStore, API_ROOT_URL } from '../lib/api';
+import { CURRENCY_CODE, formatINR } from '../lib/currency';
 import {
   AnalyticsData,
   Asset,
@@ -8,6 +9,7 @@ import {
   DecisionTrace,
   DocumentChunk,
   Expense,
+  FinancialData,
   FinancialProfile,
   GraphEdge,
   GraphNode,
@@ -22,6 +24,9 @@ import {
   RAGDocument,
   SavingsGoal,
   Transaction,
+  TransactionPage,
+  TransactionQuery,
+  TrendDelta,
   User,
 } from '../types';
 
@@ -105,19 +110,66 @@ const normalizeAllocation = (allocation: Record<string, any> | undefined) => {
   return result;
 };
 
+const normalizeTransaction = (tx: any): Transaction => ({
+  ...tx,
+  id: String(tx.id),
+  amount: toNumber(tx.amount),
+  payment_method: tx.payment_method || 'Bank Transfer',
+  status: tx.status || 'Completed',
+});
+
+const normalizeTrend = (trend: any): TrendDelta => ({
+  today: toNumber(trend?.today),
+  month: toNumber(trend?.month),
+  month_pct: toNumber(trend?.month_pct),
+});
+
 const normalizeSummary = (summary: any): DashboardSummary => ({
   net_worth: toNumber(summary.net_worth),
   total_assets: toNumber(summary.total_assets),
+  liquid_assets: toNumber(summary.liquid_assets),
   total_liabilities: toNumber(summary.total_liabilities),
   monthly_income: toNumber(summary.monthly_income),
   monthly_expense: toNumber(summary.monthly_expense),
   monthly_savings_rate: toNumber(summary.monthly_savings_rate),
-  recent_transactions: (summary.recent_transactions || []).map((tx: any) => ({
-    ...tx,
-    id: String(tx.id),
-    amount: toNumber(tx.amount),
-  })),
+  recent_transactions: (summary.recent_transactions || []).map(normalizeTransaction),
   savings_goals_progress: (summary.savings_goals_progress || []).map(normalizeGoal),
+  net_worth_trend: normalizeTrend(summary.net_worth_trend),
+  liquid_trend: normalizeTrend(summary.liquid_trend),
+  debt_trend: normalizeTrend(summary.debt_trend),
+  health_trend: normalizeTrend(summary.health_trend),
+  monthly_overview: {
+    monthly_salary: toNumber(summary.monthly_overview?.monthly_salary),
+    other_monthly_income: toNumber(summary.monthly_overview?.other_monthly_income),
+    total_monthly_income: toNumber(summary.monthly_overview?.total_monthly_income),
+    monthly_expenses: toNumber(summary.monthly_overview?.monthly_expenses),
+    monthly_savings: toNumber(summary.monthly_overview?.monthly_savings),
+    savings_rate: toNumber(summary.monthly_overview?.savings_rate),
+    net_monthly_cash_flow: toNumber(summary.monthly_overview?.net_monthly_cash_flow),
+  },
+  financial_summary: {
+    current_balance: toNumber(summary.financial_summary?.current_balance),
+    monthly_savings: toNumber(summary.financial_summary?.monthly_savings),
+    monthly_expenses: toNumber(summary.financial_summary?.monthly_expenses),
+    investment_value: toNumber(summary.financial_summary?.investment_value),
+    debt: toNumber(summary.financial_summary?.debt),
+    emergency_fund_months: toNumber(summary.financial_summary?.emergency_fund_months),
+    emergency_fund_status: summary.financial_summary?.emergency_fund_status || 'Not Started',
+    net_worth_trend: toNumber(summary.financial_summary?.net_worth_trend),
+    net_worth_trend_pct: toNumber(summary.financial_summary?.net_worth_trend_pct),
+  },
+  has_data: Boolean(summary.has_data),
+});
+
+const normalizeFinancialData = (data: any): FinancialData => ({
+  monthly_salary: toNumber(data.monthly_salary),
+  other_monthly_income: toNumber(data.other_monthly_income),
+  monthly_expenses: toNumber(data.monthly_expenses),
+  current_savings: toNumber(data.current_savings),
+  existing_investments: toNumber(data.existing_investments),
+  current_bank_balance: toNumber(data.current_bank_balance),
+  has_data: Boolean(data.has_data),
+  updated_at: data.updated_at ?? null,
 });
 
 const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> => {
@@ -136,7 +188,7 @@ const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: Gr
   incomes.forEach((income) => {
     nodes.push({
       id: income.id,
-      label: `${income.source} ($${income.amount})`,
+      label: `${income.source} (${formatINR(income.amount)})`,
       type: 'account',
       value: income.amount,
     });
@@ -146,7 +198,7 @@ const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: Gr
   assets.forEach((asset) => {
     nodes.push({
       id: asset.id,
-      label: `${asset.name} ($${asset.current_value})`,
+      label: `${asset.name} (${formatINR(asset.current_value)})`,
       type: 'account',
       value: asset.current_value,
     });
@@ -156,7 +208,7 @@ const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: Gr
   liabilities.forEach((liability) => {
     nodes.push({
       id: liability.id,
-      label: `${liability.name} ($${liability.outstanding_balance})`,
+      label: `${liability.name} (${formatINR(liability.outstanding_balance)})`,
       type: 'loan',
       value: liability.outstanding_balance,
     });
@@ -166,7 +218,7 @@ const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: Gr
   loans.forEach((loan) => {
     nodes.push({
       id: loan.id,
-      label: `${loan.lender} ($${loan.outstanding_balance})`,
+      label: `${loan.lender} (${formatINR(loan.outstanding_balance)})`,
       type: 'loan',
       value: loan.outstanding_balance,
     });
@@ -176,7 +228,7 @@ const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: Gr
   goals.forEach((goal) => {
     nodes.push({
       id: goal.id,
-      label: `${goal.name} ($${goal.target_amount})`,
+      label: `${goal.name} (${formatINR(goal.target_amount)})`,
       type: 'goal',
       value: goal.target_amount,
     });
@@ -186,7 +238,7 @@ const graphFromFinancialData = async (): Promise<{ nodes: GraphNode[]; edges: Gr
   transactions.slice(0, 25).forEach((tx) => {
     nodes.push({
       id: tx.id,
-      label: `${tx.category} ($${tx.amount})`,
+      label: `${tx.category} (${formatINR(tx.amount)})`,
       type: 'transaction',
       value: tx.amount,
     });
@@ -246,6 +298,21 @@ export const apiService = {
   getProfile: () =>
     apiRequest<FinancialProfile>({ method: 'GET', url: '/financial/profile' }),
 
+  getFinancialData: async (): Promise<FinancialData> =>
+    normalizeFinancialData(await apiRequest({ method: 'GET', url: '/financial/financial-data' })),
+
+  saveFinancialData: async (payload: {
+    monthly_salary: number;
+    other_monthly_income: number;
+    monthly_expenses: number;
+    current_savings: number;
+    existing_investments: number;
+    current_bank_balance: number;
+  }): Promise<FinancialData> =>
+    normalizeFinancialData(
+      await apiRequest({ method: 'PUT', url: '/financial/financial-data', data: payload }),
+    ),
+
   updateProfile: (payload: Record<string, unknown>) =>
     apiRequest<FinancialProfile>({ method: 'PUT', url: '/financial/profile', data: payload }),
 
@@ -296,7 +363,7 @@ export const apiService = {
         category: payload.category,
         expense_type: (payload as any).expense_type || 'VARIABLE',
         amount: payload.amount,
-        currency: (payload as any).currency || 'USD',
+        currency: (payload as any).currency || CURRENCY_CODE,
         is_recurring: payload.frequency === 'MONTHLY',
         description: (payload as any).description,
       },
@@ -337,7 +404,7 @@ export const apiService = {
         name: payload.name,
         type: payload.type,
         outstanding_balance: payload.outstanding_balance,
-        currency: 'USD',
+        currency: CURRENCY_CODE,
         details: {
           apr: payload.apr,
           monthly_minimum_payment: payload.monthly_minimum_payment,
@@ -410,7 +477,7 @@ export const apiService = {
             payload.target_date ||
             new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
           current_progress: payload.current_amount,
-          currency: 'USD',
+          currency: CURRENCY_CODE,
         },
       }),
     ),
@@ -419,11 +486,35 @@ export const apiService = {
     apiRequest<void>({ method: 'DELETE', url: `/financial/savings-goals/${id}` }),
 
   getTransactions: async (): Promise<Transaction[]> =>
-    (await apiRequest<any[]>({ method: 'GET', url: '/financial/transactions' })).map((tx) => ({
-      ...tx,
-      id: String(tx.id),
-      amount: toNumber(tx.amount),
-    })),
+    (await apiRequest<any[]>({ method: 'GET', url: '/financial/transactions' })).map(
+      normalizeTransaction,
+    ),
+
+  // Search / filter / sort / paginate all happen server-side so the ledger table
+  // stays correct as the transaction count grows.
+  queryTransactions: async (query: TransactionQuery = {}): Promise<TransactionPage> => {
+    const raw = await apiRequest<any>({
+      method: 'GET',
+      url: '/financial/transactions/query',
+      params: {
+        search: query.search || undefined,
+        category: query.category && query.category !== 'All' ? query.category : undefined,
+        type: query.type && query.type !== 'All' ? query.type : undefined,
+        sort_by: query.sort_by || 'transaction_date',
+        sort_dir: query.sort_dir || 'desc',
+        page: query.page || 1,
+        page_size: query.page_size || 10,
+      },
+    });
+    return {
+      items: (raw.items || []).map(normalizeTransaction),
+      total: toNumber(raw.total),
+      page: toNumber(raw.page, 1),
+      page_size: toNumber(raw.page_size, 10),
+      total_pages: toNumber(raw.total_pages, 1),
+      categories: raw.categories || [],
+    };
+  },
 
   createTransaction: (payload: Omit<Transaction, 'id' | 'transaction_date'>) =>
     apiRequest<Transaction>({
@@ -450,7 +541,7 @@ export const apiService = {
     apiRequest<Investment>({
       method: 'POST',
       url: '/financial/investments',
-      data: { currency: 'USD', ...payload },
+      data: { currency: CURRENCY_CODE, ...payload },
     }),
 
   deleteInvestment: (id: string) =>

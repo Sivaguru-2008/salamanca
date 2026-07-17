@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, GitBranch, Terminal } from 'lucide-react';
+import { Sparkles, FileText } from 'lucide-react';
 
 interface LandingPageProps {
   onNavigate: (page: string) => void;
@@ -36,45 +36,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* Agents Debate Simulation Widget */}
-      <div className="bg-white border border-black/5 rounded-2xl p-8 shadow-premium space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="flex items-center justify-between border-b border-black/5 pb-4">
-          <div className="flex items-center gap-3">
-            <Cpu className="text-[#c09a5f]" size={18} />
-            <span className="font-serif font-semibold text-brand-navy">Active Agent Debate Fabric</span>
-          </div>
-          <span className="text-[10px] bg-green-500/10 text-green-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-            Consensus Engine Online
-          </span>
-        </div>
-
-        {/* Debate graph visualization */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="border border-black/5 rounded-xl p-4 space-y-3 bg-[#faf8f5]/50 hover:border-[#c09a5f]/40 transition-colors">
-            <span className="text-[10px] text-brand-graphite/40 font-bold uppercase tracking-wider">1. Perception Phase</span>
-            <div className="text-xs font-semibold text-brand-navy">Twin-Keeper Agent</div>
-            <p className="text-[11px] text-brand-graphite/60">Loads your live financial snapshot, scans memory logs, and pulls twin facts (incomes, debts, balances).</p>
-          </div>
-          <div className="border border-[#c09a5f]/30 rounded-xl p-4 space-y-3 bg-white hover:border-[#c09a5f] transition-all glow-gold">
-            <span className="text-[10px] text-[#c09a5f] font-bold uppercase tracking-wider">2. Debate Phase</span>
-            <div className="text-xs font-semibold text-brand-navy">Specialist Debaters</div>
-            <p className="text-[11px] text-brand-graphite/60">Budget Agent disputes Lifestyle leaks. Debt Agent pushes Avalanche paydown. Risk Sentinel stresses default scenarios.</p>
-          </div>
-          <div className="border border-black/5 rounded-xl p-4 space-y-3 bg-[#faf8f5]/50 hover:border-[#c09a5f]/40 transition-colors">
-            <span className="text-[10px] text-brand-graphite/40 font-bold uppercase tracking-wider">3. Consensus Phase</span>
-            <div className="text-xs font-semibold text-brand-navy">Verifier & Explainer</div>
-            <p className="text-[11px] text-brand-graphite/60">Verifier tests suggestions. Explainer compiles opinion consensus report for the dashboard.</p>
-          </div>
-        </div>
-      </div>
-
       {/* Grid Features */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         <div className="bg-white border border-black/5 rounded-xl p-6 space-y-3 shadow-subtle hover:border-[#c09a5f]/30 transition-all">
-          <GitBranch className="text-[#c09a5f]" size={20} />
-          <h3 className="font-serif text-base font-semibold text-brand-navy">Knowledge Graph</h3>
+          <Sparkles className="text-[#c09a5f]" size={20} />
+          <h3 className="font-serif text-base font-semibold text-brand-navy">AI Council</h3>
           <p className="text-xs text-brand-graphite/60 leading-relaxed">
-            Every transaction, account, loan, and financial goal is mapped as a node, illustrating relationships and cashflows dynamically.
+            Consult a multi-agent council of specialists debating wealth risk, retirement, taxes, and loan optimizations.
           </p>
         </div>
 
@@ -87,10 +55,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
         </div>
 
         <div className="bg-white border border-black/5 rounded-xl p-6 space-y-3 shadow-subtle hover:border-[#c09a5f]/30 transition-all">
-          <Terminal className="text-[#c09a5f]" size={20} />
-          <h3 className="font-serif text-base font-semibold text-brand-navy">Developer Console</h3>
+          <FileText className="text-[#c09a5f]" size={20} />
+          <h3 className="font-serif text-base font-semibold text-brand-navy">Loan Intelligence</h3>
           <p className="text-xs text-brand-graphite/60 leading-relaxed">
-            Inspect real-time execution times, API latency metrics, feature flags, Swagger frames, and system health checks.
+            Upload complex loan document PDFs to analyze terms, calculate true amortization costs, and evaluate refinancing alternatives.
           </p>
         </div>
       </div>

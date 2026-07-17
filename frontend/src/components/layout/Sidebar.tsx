@@ -1,9 +1,7 @@
 import React from 'react';
 import {
   LayoutDashboard, MessageSquareCode, FileSearch,
-  WalletCards, Compass, GitMerge, ShieldAlert,
-  Terminal, ShieldCheck, Cpu, Landmark, CircleDollarSign,
-  LineChart, Brain, History, ChevronLeft, ChevronRight
+  ShieldAlert, Landmark, Brain, History, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { User } from '../../types';
 
@@ -28,23 +26,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       title: 'Studio',
       items: [
-        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-        { id: 'twin', label: 'Financial Twin', icon: Compass },
-        { id: 'tracker', label: 'Budget Tracker', icon: WalletCards }
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }
       ]
     },
     {
       title: 'Intelligence',
       items: [
         { id: 'advisors', label: 'AI Council', icon: MessageSquareCode },
-        { id: 'loan', label: 'Loan Intelligence', icon: FileSearch },
-        { id: 'simulator', label: 'Simulator', icon: LineChart }
+        { id: 'loan', label: 'Loan Intelligence', icon: FileSearch }
       ]
     },
     {
       title: 'Operations',
       items: [
-        { id: 'goals', label: 'Goal Planner', icon: CircleDollarSign },
         { id: 'investment', label: 'Investment Portfolio', icon: Landmark },
         { id: 'monitoring', label: 'Continuous Monitor', icon: ShieldAlert }
       ]
@@ -52,18 +46,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       title: 'Advanced Logs',
       items: [
-        { id: 'graph', label: 'Knowledge Graph', icon: GitMerge },
         { id: 'rag', label: 'RAG Explorer', icon: Brain },
-        { id: 'decisions', label: 'Decision Replay', icon: History },
-        { id: 'memory', label: 'Financial Memory', icon: History }
-      ]
-    },
-    {
-      title: 'Developer',
-      items: [
-        { id: 'observability', label: 'Observability', icon: Cpu },
-        { id: 'console', label: 'Developer Console', icon: Terminal },
-        { id: 'admin', label: 'Admin Panel', icon: ShieldCheck }
+        { id: 'decisions', label: 'Decision Replay', icon: History }
       ]
     }
   ];

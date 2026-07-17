@@ -28,7 +28,7 @@ class Liability(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditMixin
         String(100), nullable=False
     )  # Credit Cards, Personal Loans, etc.
     outstanding_balance: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     user = relationship("User")

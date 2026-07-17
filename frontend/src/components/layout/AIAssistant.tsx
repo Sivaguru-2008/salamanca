@@ -6,14 +6,15 @@ import { AdvisorMessage } from '../../types';
 interface AIAssistantProps {
   isOpen: boolean;
   onClose: () => void;
-  snapshotContext: any;
+  /** The user's live financial figures, sent with every question. */
+  context: Record<string, unknown>;
 }
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({
-  isOpen, onClose, snapshotContext
+  isOpen, onClose, context
 }) => {
   const [messages, setMessages] = useState<AdvisorMessage[]>([
-    { id: '1', sender: 'agent', text: 'Hello! I am the Chief Financial Advisor. I coordinate the council of 8 agents to analyze your variables. How can I help you optimize your snapshot today?', time: '12:00' }
+    { id: '1', sender: 'agent', text: 'Hello! I am the Chief Financial Advisor. I coordinate the council of 8 agents to analyze your variables. How can I help you with your finances today?', time: '12:00' }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -48,7 +49,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const response = await apiService.sendAdvisorMessage('advisor', userText, snapshotContext);
+      const response = await apiService.sendAdvisorMessage('advisor', userText, context);
       setMessages(prev => [...prev, response]);
     } catch(e) {
       setMessages(prev => [...prev, {

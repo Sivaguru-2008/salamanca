@@ -75,14 +75,67 @@ export interface Budget {
   budget_alerts?: Record<string, any>;
 }
 
+export type TransactionType =
+  | 'Income'
+  | 'Expense'
+  | 'Investment'
+  | 'Transfer'
+  | 'Loan Payment'
+  | 'Insurance Premium'
+  | 'Refund';
+
+export type PaymentMethod =
+  | 'UPI'
+  | 'Bank Transfer'
+  | 'Credit Card'
+  | 'Debit Card'
+  | 'Cash'
+  | 'Net Banking'
+  | 'Auto Debit';
+
+export type TransactionStatus = 'Completed' | 'Pending' | 'Failed';
+
 export interface Transaction {
   id: string;
-  type: 'Income' | 'Expense' | 'Investment' | 'Transfer';
+  type: TransactionType;
   category: string;
   amount: number;
   currency: string;
   description?: string;
+  payment_method: PaymentMethod | string;
+  status: TransactionStatus | string;
   transaction_date: string;
+}
+
+export interface TransactionQuery {
+  search?: string;
+  category?: string;
+  type?: string;
+  sort_by?: 'transaction_date' | 'amount' | 'category' | 'status';
+  sort_dir?: 'asc' | 'desc';
+  page?: number;
+  page_size?: number;
+}
+
+export interface TransactionPage {
+  items: Transaction[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  categories: string[];
+}
+
+/** The six figures behind the dashboard's Financial Data Upload form. */
+export interface FinancialData {
+  monthly_salary: number;
+  other_monthly_income: number;
+  monthly_expenses: number;
+  current_savings: number;
+  existing_investments: number;
+  current_bank_balance: number;
+  has_data: boolean;
+  updated_at?: string | null;
 }
 
 export interface SavingsGoal {
@@ -96,33 +149,87 @@ export interface SavingsGoal {
 
 export interface HealthScoreMetric {
   score: number;
+  /** 0 when the metric cannot be measured yet, so its weight is redistributed. */
+  weight: number;
   raw_value: string;
   target: string;
   explanation: string;
 }
 
+export type HealthGrade =
+  | 'EXCELLENT'
+  | 'VERY_GOOD'
+  | 'GOOD'
+  | 'NEEDS_IMPROVEMENT'
+  | 'POOR';
+
+export type HealthMetricKey =
+  | 'savings_rate'
+  | 'debt_to_income'
+  | 'emergency_fund'
+  | 'expense_stability'
+  | 'investment_ratio'
+  | 'cash_flow_trend';
+
 export interface HealthScore {
   score: number;
-  grade: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
-  breakdown: {
-    savings_rate: HealthScoreMetric;
-    debt_to_income: HealthScoreMetric;
-    emergency_fund: HealthScoreMetric;
-    investment_ratio: HealthScoreMetric;
-    insurance_coverage: HealthScoreMetric;
-  };
+  grade: HealthGrade;
+  grade_label: string;
+  breakdown: Record<HealthMetricKey, HealthScoreMetric>;
+  strengths: string[];
+  areas_to_improve: string[];
+  insights: string[];
   recommendations: string[];
+  has_data: boolean;
+}
+
+export interface TrendDelta {
+  today: number;
+  month: number;
+  month_pct: number;
+}
+
+export interface MonthlyOverview {
+  monthly_salary: number;
+  other_monthly_income: number;
+  total_monthly_income: number;
+  monthly_expenses: number;
+  monthly_savings: number;
+  savings_rate: number;
+  net_monthly_cash_flow: number;
+}
+
+export interface FinancialSummary {
+  current_balance: number;
+  monthly_savings: number;
+  monthly_expenses: number;
+  investment_value: number;
+  debt: number;
+  emergency_fund_months: number;
+  emergency_fund_status: string;
+  net_worth_trend: number;
+  net_worth_trend_pct: number;
 }
 
 export interface DashboardSummary {
   net_worth: number;
+  /** Everything owned, investments included. */
   total_assets: number;
+  /** Cash, bank and savings only. */
+  liquid_assets: number;
   total_liabilities: number;
   monthly_income: number;
   monthly_expense: number;
   monthly_savings_rate: number;
   recent_transactions: Transaction[];
   savings_goals_progress: SavingsGoal[];
+  net_worth_trend: TrendDelta;
+  liquid_trend: TrendDelta;
+  debt_trend: TrendDelta;
+  health_trend: TrendDelta;
+  monthly_overview: MonthlyOverview;
+  financial_summary: FinancialSummary;
+  has_data: boolean;
 }
 
 export interface AdvisorMessage {

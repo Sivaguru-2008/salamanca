@@ -28,7 +28,7 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditMixin, Ba
         String(100), nullable=False
     )  # Cash, Bank accounts, FD, Gold, etc.
     current_value: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     user = relationship("User")

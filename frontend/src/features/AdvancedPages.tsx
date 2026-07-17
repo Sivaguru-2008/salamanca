@@ -4,14 +4,12 @@ import {
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
 import { apiService } from '../services/apiService';
-import { buildDocsUrl, API_ROOT_URL } from '../lib/api';
+import { CURRENCY_SYMBOL, formatINR, formatINRSigned } from '../lib/currency';
 import {
-  SavingsGoal, RAGDocument, GraphNode, GraphEdge, ObservabilityLog,
-  Investment, DecisionTrace, MemoryFact, MonitorAlert, DocumentChunk,
-  DashboardSummary, User, FinancialProfile,
+  RAGDocument, Investment, DecisionTrace, MonitorAlert, DocumentChunk,
+  User, FinancialProfile,
 } from '../types';
 
 const CHART_COLORS = ['#c09a5f', '#0a1120', '#7b8493', '#ad8449', '#4a5568', '#8b6f47'];
@@ -30,104 +28,7 @@ const relativeTime = (iso: string | undefined) => {
 };
 
 // ==========================================================================
-// 1. GOALS PAGE (live data passed from App state)
-// ==========================================================================
-interface GoalsPageProps {
-  goals: SavingsGoal[];
-  onAddGoal: (name: string, target: number) => void;
-  onDeleteGoal: (id: string) => void;
-}
-export const GoalsPage: React.FC<GoalsPageProps> = ({ goals, onAddGoal, onDeleteGoal }) => {
-  const [showAdd, setShowAdd] = useState(false);
-  const [name, setName] = useState('');
-  const [target, setTarget] = useState(5000);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    onAddGoal(name.trim(), target);
-    setName('');
-    setTarget(5000);
-    setShowAdd(false);
-  };
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="font-serif text-2xl font-medium text-brand-navy">Goal Planner</h2>
-          <p className="text-xs text-brand-graphite/50">Establish and track capital milestones for retirement, travels, or assets.</p>
-        </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="bg-brand-navy hover:bg-[#c09a5f] text-white px-4 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors"
-        >
-          <Plus size={14} /> New Goal
-        </button>
-      </div>
-
-      {goals.length === 0 && (
-        <div className="bg-white border border-black/5 rounded-2xl p-10 text-center text-xs text-brand-graphite/40">
-          No savings goals yet. Create your first milestone to start tracking progress.
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {goals.map(g => {
-          const pct = g.target_amount > 0 ? Math.round((g.current_amount / g.target_amount) * 100) : 0;
-          return (
-            <div key={g.id} className="bg-white border border-black/5 rounded-xl p-5 shadow-subtle space-y-4 relative">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="font-serif text-sm font-semibold text-brand-navy">{g.name}</h3>
-                  <span className="text-[10px] text-brand-graphite/40 font-bold uppercase tracking-wider">Milestone</span>
-                </div>
-                <button onClick={() => onDeleteGoal(g.id)} className="text-brand-graphite/30 hover:text-red-500">
-                  <Trash2 size={13} />
-                </button>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-semibold">
-                  <span className="text-brand-graphite/50">${g.current_amount.toLocaleString()} / ${g.target_amount.toLocaleString()}</span>
-                  <span className="text-[#c09a5f]">{pct}%</span>
-                </div>
-                <div className="w-full bg-black/5 h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#c09a5f] h-full rounded-full" style={{ width: `${Math.min(pct, 100)}%` }}></div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {showAdd && (
-        <div className="fixed inset-0 bg-[#0a1120]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form onSubmit={handleSubmit} className="bg-white rounded-2xl w-full max-w-sm border border-black/5 p-6 space-y-5 shadow-premium animate-in zoom-in-95 duration-200">
-            <h3 className="font-serif text-base font-semibold text-brand-navy">Create Savings Goal</h3>
-            <div className="space-y-4">
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-bold text-brand-graphite/40 uppercase tracking-wider">Goal Name</label>
-                <input type="text" required placeholder="e.g. Retirement Fund" className="bg-black/5 border border-transparent focus:bg-white focus:border-[#c09a5f]/40 outline-none rounded-lg px-3 py-2 text-xs font-semibold" value={name} onChange={e => setName(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-bold text-brand-graphite/40 uppercase tracking-wider">Target Amount ($)</label>
-                <input type="number" required className="bg-black/5 border border-transparent focus:bg-white focus:border-[#c09a5f]/40 outline-none rounded-lg px-3 py-2 text-xs font-semibold" value={target} onChange={e => setTarget(Number(e.target.value))} />
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={() => setShowAdd(false)} className="bg-black/5 px-4 py-2 rounded-full text-xs font-semibold">Cancel</button>
-              <button type="submit" className="bg-brand-navy text-white px-5 py-2 rounded-full text-xs font-semibold">Create</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ==========================================================================
-// 2. INVESTMENT PAGE (live /financial/investments + /financial/analytics)
+// 1. INVESTMENT PAGE (live /financial/investments + /financial/analytics)
 // ==========================================================================
 export const InvestmentPage: React.FC = () => {
   const [investments, setInvestments] = useState<Investment[]>([]);
@@ -234,7 +135,7 @@ export const InvestmentPage: React.FC = () => {
                 {allocation.map((item, idx) => (
                   <div key={idx} className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CHART_COLORS[idx % CHART_COLORS.length] }}></span>
-                    <span>{item.name}: ${item.value.toLocaleString()}</span>
+                    <span>{item.name}: {formatINR(item.value)}</span>
                   </div>
                 ))}
               </div>
@@ -246,11 +147,11 @@ export const InvestmentPage: React.FC = () => {
             <div className="space-y-4">
               <div className="border-b border-black/5 pb-3">
                 <span className="text-[8px] font-bold text-brand-graphite/40 uppercase tracking-widest block">Cost Basis</span>
-                <span className="text-xl font-bold font-serif text-brand-navy">${Math.round(totals.invested).toLocaleString()}</span>
+                <span className="text-xl font-bold font-serif text-brand-navy">{formatINR(totals.invested)}</span>
               </div>
               <div className="border-b border-black/5 pb-3">
                 <span className="text-[8px] font-bold text-brand-graphite/40 uppercase tracking-widest block">Current Value</span>
-                <span className="text-xl font-bold font-serif text-brand-navy">${Math.round(totals.current).toLocaleString()}</span>
+                <span className="text-xl font-bold font-serif text-brand-navy">{formatINR(totals.current)}</span>
               </div>
               <div>
                 <span className="text-[8px] font-bold text-brand-graphite/40 uppercase tracking-widest block">Unrealized Return</span>
@@ -285,10 +186,10 @@ export const InvestmentPage: React.FC = () => {
                         <td className="py-3 font-semibold text-brand-navy">{inv.name}</td>
                         <td className="py-3">{inv.type}</td>
                         <td className="py-3 font-mono">{inv.ticker || '—'}</td>
-                        <td className="py-3 text-right">${inv.amount_invested.toLocaleString()}</td>
-                        <td className="py-3 text-right">${inv.current_value.toLocaleString()}</td>
+                        <td className="py-3 text-right tabular-nums">{formatINR(inv.amount_invested)}</td>
+                        <td className="py-3 text-right tabular-nums">{formatINR(inv.current_value)}</td>
                         <td className={`py-3 text-right font-bold ${pl >= 0 ? 'text-green-600' : 'text-rose-600'}`}>
-                          {pl >= 0 ? '+' : '-'}${Math.abs(pl).toLocaleString()}
+                          {formatINRSigned(pl)}
                         </td>
                         <td className="py-3 text-right">
                           <button onClick={() => handleDelete(inv.id)} className="text-brand-graphite/30 hover:text-red-500">
@@ -347,7 +248,7 @@ export const InvestmentPage: React.FC = () => {
 };
 
 // ==========================================================================
-// 3. MONITORING PAGE (alerts derived from live backend data)
+// 2. MONITORING PAGE (alerts derived from live backend data)
 // ==========================================================================
 export const MonitoringPage: React.FC = () => {
   const [alerts, setAlerts] = useState<MonitorAlert[]>([]);
@@ -381,7 +282,7 @@ export const MonitoringPage: React.FC = () => {
           derived.push({
             level: 'high',
             title: 'Solvency stress detected',
-            desc: `Total debt ($${summary.total_liabilities.toLocaleString()}) exceeds total assets ($${summary.total_assets.toLocaleString()}). Consider prioritizing high-APR paydown.`,
+            desc: `Total debt (${formatINR(summary.total_liabilities)}) exceeds total assets (${formatINR(summary.total_assets)}). Consider prioritizing high-APR paydown.`,
             time: 'Live',
           });
         }
@@ -391,7 +292,7 @@ export const MonitoringPage: React.FC = () => {
           derived.push({
             level: 'high',
             title: 'Negative monthly cash flow',
-            desc: `Monthly expenses ($${summary.monthly_expense.toLocaleString()}) exceed income ($${summary.monthly_income.toLocaleString()}).`,
+            desc: `Monthly expenses (${formatINR(summary.monthly_expense)}) exceed income (${formatINR(summary.monthly_income)}).`,
             time: 'Live',
           });
         }
@@ -401,7 +302,7 @@ export const MonitoringPage: React.FC = () => {
           derived.push({
             level: 'high',
             title: `High-interest loan: ${l.lender}`,
-            desc: `Active loan carries ${l.interest_rate}% interest on a $${l.outstanding_balance.toLocaleString()} balance — above the 36% consumer guideline.`,
+            desc: `Active loan carries ${l.interest_rate}% interest on a ${formatINR(l.outstanding_balance)} balance — above the 36% consumer guideline.`,
             time: 'Live',
           });
         });
@@ -479,139 +380,7 @@ export const MonitoringPage: React.FC = () => {
 };
 
 // ==========================================================================
-// 4. KNOWLEDGE GRAPH PAGE (live financial entities)
-// ==========================================================================
-export const GraphPage: React.FC = () => {
-  const [data, setData] = useState<{ nodes: GraphNode[], edges: GraphEdge[] }>({ nodes: [], edges: [] });
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    apiService.getKnowledgeGraph().then(res => {
-      // Ring layout around the central twin node.
-      const nodes = res.nodes.map((node, idx) => {
-        if (node.id === 'user') return { ...node, x: 250, y: 150 };
-        const angle = (idx / Math.max(res.nodes.length - 1, 1)) * 2 * Math.PI;
-        return {
-          ...node,
-          x: 250 + 160 * Math.cos(angle),
-          y: 150 + 100 * Math.sin(angle)
-        };
-      });
-      setData({ nodes, edges: res.edges });
-    }).finally(() => setLoading(false));
-  }, []);
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300">
-      <div>
-        <h2 className="font-serif text-2xl font-medium text-brand-navy">Interactive Knowledge Graph</h2>
-        <p className="text-xs text-brand-graphite/50">Semantic graph built from your live incomes, assets, liabilities, loans, goals, and transactions.</p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="bg-white border border-black/5 rounded-2xl p-4 shadow-premium lg:col-span-2">
-          {loading ? (
-            <div className="h-72 animate-pulse bg-black/[0.02] rounded-xl" />
-          ) : data.nodes.length <= 1 ? (
-            <div className="h-72 flex items-center justify-center text-xs text-brand-graphite/40 italic">
-              Add incomes, assets, or transactions to populate the graph.
-            </div>
-          ) : (
-          <svg viewBox="0 0 500 300" className="w-full h-auto bg-[#faf8f5]/40 rounded-xl border border-black/[0.03]">
-            {data.edges.map((edge, idx) => {
-              const src = data.nodes.find(n => n.id === edge.source);
-              const tgt = data.nodes.find(n => n.id === edge.target);
-              if (!src || !tgt) return null;
-              return (
-                <g key={idx}>
-                  <line
-                    x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
-                    stroke="rgba(192, 154, 95, 0.25)" strokeWidth={1.5}
-                  />
-                  {edge.label && (
-                    <text
-                      x={(src.x! + tgt.x!) / 2} y={(src.y! + tgt.y!) / 2 - 4}
-                      className="fill-brand-graphite/30 text-[7px] font-bold text-center"
-                      textAnchor="middle"
-                    >
-                      {edge.label}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-
-            {data.nodes.map((node) => {
-              const isSelected = selectedNode?.id === node.id;
-              return (
-                <g
-                  key={node.id}
-                  className="cursor-pointer"
-                  onClick={() => setSelectedNode(node)}
-                >
-                  <circle
-                    cx={node.x} cy={node.y} r={node.type === 'user' ? 14 : 9}
-                    fill={node.type === 'user' ? '#0a1120' : isSelected ? '#ad8449' : '#c09a5f'}
-                    stroke={isSelected ? '#ffffff' : 'transparent'}
-                    strokeWidth={2}
-                    className="transition-all hover:scale-110"
-                  />
-                  <text
-                    x={node.x} y={node.y! + 20}
-                    className="fill-brand-graphite/60 text-[8px] font-bold"
-                    textAnchor="middle"
-                  >
-                    {node.id === 'user' ? 'Twin Center' : node.label.split(' ')[0]}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-          )}
-        </div>
-
-        <div className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium flex flex-col justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-[#c09a5f] uppercase tracking-wider block mb-4">Node Inspector</span>
-            {selectedNode ? (
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-                    selectedNode.type === 'user' ? 'bg-[#0a1120] text-white' : 'bg-[#c09a5f]/15 text-[#c09a5f]'
-                  }`}>
-                    {selectedNode.type.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-brand-navy">{selectedNode.label}</h3>
-                    <span className="text-[9px] uppercase tracking-wider text-brand-graphite/40 font-bold">{selectedNode.type} Node</span>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-brand-graphite/60 space-y-2 border-t border-black/5 pt-4 leading-relaxed">
-                  <p><strong>Database ID:</strong> <span className="font-mono break-all">{selectedNode.id}</span></p>
-                  {selectedNode.value !== undefined && (
-                    <p><strong>Value:</strong> ${selectedNode.value.toLocaleString()}</p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-brand-graphite/40 italic py-12 text-center">
-                Click any node on the graph to inspect its database link properties.
-              </div>
-            )}
-          </div>
-          <span className="text-[8px] font-semibold text-brand-graphite/30 uppercase tracking-widest text-center mt-4">
-            FIOS Graph Engine v1.0
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ==========================================================================
-// 5. RAG EXPLORER PAGE (upload → extract → chunk → retrieve, all live)
+// 3. RAG EXPLORER PAGE (upload → extract → chunk → retrieve, all live)
 // ==========================================================================
 export const RagPage: React.FC = () => {
   const [docs, setDocs] = useState<RAGDocument[]>([]);
@@ -840,7 +609,7 @@ export const RagPage: React.FC = () => {
 };
 
 // ==========================================================================
-// 6. DECISIONS PAGE (real council decision log from Redis via /chat/decisions)
+// 4. DECISIONS PAGE (real council decision log from Redis via /chat/decisions)
 // ==========================================================================
 export const DecisionsPage: React.FC = () => {
   const [trace, setTrace] = useState<DecisionTrace[]>([]);
@@ -910,433 +679,7 @@ export const DecisionsPage: React.FC = () => {
 };
 
 // ==========================================================================
-// 7. FINANCIAL MEMORY PAGE (facts extracted from the live database)
-// ==========================================================================
-export const MemoryPage: React.FC = () => {
-  const [facts, setFacts] = useState<MemoryFact[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [incomesRaw, loans, insurances, goals, profile] = await Promise.all([
-          apiService.getIncomesRaw(),
-          apiService.getLoans(),
-          apiService.getInsurances(),
-          apiService.getGoals(),
-          apiService.getProfile(),
-        ]);
-
-        const collected: MemoryFact[] = [];
-        const monthOld = Date.now() - 30 * 24 * 3600 * 1000;
-        const storageClass = (iso: string | undefined): MemoryFact['storageClass'] =>
-          iso && new Date(iso).getTime() > monthOld ? 'Short-term' : 'Long-term';
-
-        incomesRaw.forEach((inc: any) => {
-          collected.push({
-            key: `income_${inc.source?.toLowerCase().replace(/\s+/g, '_')}`,
-            value: `Income source '${inc.source}' registered at $${Number(inc.amount).toLocaleString()} (${inc.frequency}).`,
-            storageClass: storageClass(inc.created_at),
-            recordedAt: inc.created_at,
-          });
-        });
-        loans.forEach((loan) => {
-          collected.push({
-            key: `loan_${loan.lender?.toLowerCase().replace(/\s+/g, '_')}`,
-            value: `Loan from ${loan.lender}: $${loan.outstanding_balance.toLocaleString()} outstanding at ${loan.interest_rate}% (${loan.status}).`,
-            storageClass: storageClass(loan.start_date),
-            recordedAt: loan.start_date,
-          });
-        });
-        insurances.forEach((ins) => {
-          collected.push({
-            key: `insurance_${ins.type?.toLowerCase().replace(/\s+/g, '_')}`,
-            value: `${ins.type} policy from ${ins.provider} covers $${ins.coverage_amount.toLocaleString()} (renews ${new Date(ins.renewal_date).toLocaleDateString()}).`,
-            storageClass: 'Long-term',
-            recordedAt: ins.renewal_date,
-          });
-        });
-        goals.forEach((goal) => {
-          collected.push({
-            key: `goal_${goal.name?.toLowerCase().replace(/\s+/g, '_')}`,
-            value: `Savings goal '${goal.name}' targets $${goal.target_amount.toLocaleString()} — $${goal.current_amount.toLocaleString()} funded.`,
-            storageClass: 'Long-term',
-            recordedAt: goal.target_date || '',
-          });
-        });
-        collected.push({
-          key: 'risk_profile',
-          value: `Risk profile stored as ${profile.risk_profile}, literacy level ${profile.financial_literacy_level}, base currency ${profile.currency}.`,
-          storageClass: 'Long-term',
-          recordedAt: profile.updated_at || '',
-        });
-
-        setFacts(collected);
-      } catch {
-        setFacts([]);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300">
-      <div>
-        <h2 className="font-serif text-2xl font-medium text-brand-navy">Financial Memory Store</h2>
-        <p className="text-xs text-brand-graphite/50">Semantic facts the council grounds its answers in — extracted live from your database.</p>
-      </div>
-
-      <div className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium space-y-4">
-        <div className="flex justify-between items-center">
-          <span className="text-[11px] font-bold text-[#c09a5f] uppercase tracking-wider">Fact Ledger</span>
-          <span className="text-[10px] text-brand-graphite/40">{facts.length} facts in store</span>
-        </div>
-
-        {loading ? (
-          <div className="space-y-3">{[0, 1, 2, 3].map(i => <div key={i} className="h-10 bg-black/[0.02] rounded animate-pulse" />)}</div>
-        ) : facts.length === 0 ? (
-          <div className="text-xs text-brand-graphite/40 italic py-8 text-center">
-            No facts stored yet. Add incomes, loans, insurance, or goals and they will be memorized here.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead>
-                <tr className="border-b border-black/5 text-brand-graphite/40 font-bold uppercase tracking-wider">
-                  <th className="py-2.5">Fact Identifier</th>
-                  <th className="py-2.5">Extracted Value</th>
-                  <th className="py-2.5">Storage Class</th>
-                  <th className="py-2.5 text-right">Recorded</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/5 text-brand-graphite/85">
-                {facts.map((m, idx) => (
-                  <tr key={idx} className="hover:bg-black/[0.01]">
-                    <td className="py-3 font-semibold font-mono">{m.key}</td>
-                    <td className="py-3">{m.value}</td>
-                    <td className="py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-semibold ${
-                        m.storageClass === 'Short-term' ? 'bg-amber-500/10 text-amber-600' : 'bg-blue-500/10 text-blue-600'
-                      }`}>{m.storageClass}</span>
-                    </td>
-                    <td className="py-3 text-right text-brand-graphite/40">{relativeTime(m.recordedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// ==========================================================================
-// 8. SIMULATOR PAGE (Monte Carlo over the user's live financial snapshot)
-// ==========================================================================
-const runMonteCarlo = (startWealth: number, monthlySurplus: number) => {
-  const YEARS = 30;
-  const PATHS = 400;
-  const MU = 0.07 / 12; // 7% expected annual return
-  const SIGMA = 0.15 / Math.sqrt(12); // 15% annual volatility
-
-  // Deterministic PRNG so re-renders don't repaint different bands.
-  let seed = 42;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-  };
-  const gaussian = () => {
-    const u1 = Math.max(rand(), 1e-9);
-    const u2 = rand();
-    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  };
-
-  const checkpoints = [0, 5, 10, 15, 20, 25, 30];
-  const results: Record<number, number[]> = {};
-  checkpoints.forEach(y => { results[y] = []; });
-
-  for (let p = 0; p < PATHS; p++) {
-    let wealth = startWealth;
-    results[0].push(wealth);
-    for (let month = 1; month <= YEARS * 12; month++) {
-      wealth = Math.max(0, wealth * (1 + MU + SIGMA * gaussian()) + monthlySurplus);
-      if (month % 60 === 0) results[month / 12].push(wealth);
-    }
-  }
-
-  const percentile = (arr: number[], q: number) => {
-    const sorted = [...arr].sort((a, b) => a - b);
-    return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
-  };
-
-  return checkpoints.map(y => ({
-    name: `Yr ${y}`,
-    Best: Math.round(percentile(results[y], 0.9)),
-    Median: Math.round(percentile(results[y], 0.5)),
-    Worst: Math.round(percentile(results[y], 0.1)),
-  }));
-};
-
-export const SimulatorPage: React.FC = () => {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    apiService.getDashboardSummary()
-      .then(setSummary)
-      .catch(() => setSummary(null))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const data = useMemo(() => {
-    if (!summary) return [];
-    const surplus = summary.monthly_income - summary.monthly_expense;
-    return runMonteCarlo(summary.total_assets, surplus);
-  }, [summary]);
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300">
-      <div>
-        <h2 className="font-serif text-2xl font-medium text-brand-navy">Monte Carlo Stochastic Projections</h2>
-        <p className="text-xs text-brand-graphite/50">
-          400 simulated market paths seeded with your live assets and monthly surplus (7% expected return, 15% volatility).
-        </p>
-      </div>
-
-      <div className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <span className="text-[11px] font-bold text-[#c09a5f] uppercase tracking-wider">Stochastic Distribution (P10 / P50 / P90)</span>
-          {summary && (
-            <span className="text-[10px] text-brand-graphite/40 font-mono">
-              Start: ${summary.total_assets.toLocaleString()} · Surplus: ${(summary.monthly_income - summary.monthly_expense).toLocaleString()}/mo
-            </span>
-          )}
-        </div>
-        {loading ? (
-          <div className="h-64 bg-black/[0.02] rounded-xl animate-pulse" />
-        ) : !summary ? (
-          <div className="h-64 flex items-center justify-center text-xs text-brand-graphite/40 italic">
-            Could not load your financial snapshot from the backend.
-          </div>
-        ) : (
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.03)" />
-                <XAxis dataKey="name" tickLine={false} axisLine={false} style={{ fontSize: 10, fill: 'rgba(0,0,0,0.4)' }} />
-                <YAxis tickLine={false} axisLine={false} style={{ fontSize: 10, fill: 'rgba(0,0,0,0.4)' }} />
-                <Tooltip contentStyle={{ fontSize: 11 }} formatter={(value: number) => `$${value.toLocaleString()}`} />
-                <Line type="monotone" dataKey="Best" stroke="rgba(34, 197, 94, 0.7)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Median" stroke="#c09a5f" strokeWidth={3} dot={false} />
-                <Line type="monotone" dataKey="Worst" stroke="rgba(239, 68, 68, 0.7)" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// ==========================================================================
-// 9. OBSERVABILITY PAGE (live /readyz dependency checks)
-// ==========================================================================
-export const ObservabilityPage: React.FC = () => {
-  const [logs, setLogs] = useState<ObservabilityLog[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    apiService.getObservabilityLogs()
-      .then(res => setLogs(res))
-      .catch(e => setError(e instanceof Error ? e.message : 'Backend unreachable.'));
-  }, []);
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300">
-      <div>
-        <h2 className="font-serif text-2xl font-medium text-brand-navy">Dependency Observability</h2>
-        <p className="text-xs text-brand-graphite/50">Live readiness checks and latency for every backend dependency.</p>
-      </div>
-
-      <div className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium space-y-4">
-        <span className="text-[11px] font-bold text-[#c09a5f] uppercase tracking-wider block">Dependency Telemetry</span>
-        {error && <div className="text-xs text-rose-600 font-semibold">{error}</div>}
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead>
-              <tr className="border-b border-black/5 text-brand-graphite/40 font-bold uppercase tracking-wider">
-                <th className="py-2.5">Dependency</th>
-                <th className="py-2.5">Status</th>
-                <th className="py-2.5">Latency</th>
-                <th className="py-2.5">Criticality</th>
-                <th className="py-2.5 text-right">Detail</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/5 text-brand-graphite/85">
-              {logs.map((log) => (
-                <tr key={log.id} className="hover:bg-black/[0.01]">
-                  <td className="py-3 font-semibold text-brand-navy">{log.agentName}</td>
-                  <td className="py-3 font-mono">{log.action}</td>
-                  <td className="py-3 text-[#c09a5f] font-bold">{log.latencyMs}ms</td>
-                  <td className="py-3">{log.memoryRecall}</td>
-                  <td className="py-3 text-right max-w-xs truncate text-brand-graphite/60">{log.reasoning}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ==========================================================================
-// 10. DEVELOPER CONSOLE PAGE (auto-detected backend URL + offline reconnect)
-// ==========================================================================
-export const ConsolePage: React.FC = () => {
-  const [backendUp, setBackendUp] = useState<boolean | null>(null);
-  const [checkCount, setCheckCount] = useState(0);
-  const docsUrl = buildDocsUrl();
-
-  useEffect(() => {
-    let active = true;
-    const check = async () => {
-      try {
-        const response = await fetch(`${API_ROOT_URL}/healthz`, { cache: 'no-store' });
-        if (active) setBackendUp(response.ok);
-      } catch {
-        if (active) setBackendUp(false);
-      }
-    };
-    check();
-    // Auto-reconnect: poll while offline (every 5s), heartbeat while online (every 30s).
-    const interval = window.setInterval(() => {
-      setCheckCount(c => c + 1);
-      check();
-    }, backendUp === false ? 5000 : 30000);
-    return () => { active = false; window.clearInterval(interval); };
-  }, [backendUp]);
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300 h-full flex flex-col">
-      <div>
-        <h2 className="font-serif text-2xl font-medium text-brand-navy">Developer Console Playground</h2>
-        <p className="text-xs text-brand-graphite/50">Live Swagger schema interface and API endpoints tester.</p>
-      </div>
-
-      <div className="bg-white border border-black/5 rounded-2xl flex-1 min-h-[460px] shadow-premium overflow-hidden flex flex-col">
-        <div className="px-5 py-3 border-b border-black/5 bg-white flex justify-between items-center text-[10px] text-brand-graphite/40 font-bold uppercase tracking-wider">
-          <span className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${backendUp ? 'bg-green-500' : backendUp === false ? 'bg-red-500 animate-pulse' : 'bg-amber-400'}`} />
-            FastAPI interactive specs
-          </span>
-          <span>Target: {docsUrl}</span>
-        </div>
-        {backendUp === false ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
-            <span className="text-sm font-serif font-semibold text-brand-navy">Backend Offline</span>
-            <p className="text-xs text-brand-graphite/50 max-w-sm leading-relaxed">
-              Could not reach <span className="font-mono">{API_ROOT_URL}/healthz</span>. Reconnecting automatically —
-              attempt {checkCount}. Start the API with <span className="font-mono">docker compose up</span>.
-            </p>
-            <Loader2 size={16} className="animate-spin text-[#c09a5f]" />
-          </div>
-        ) : (
-          <iframe
-            src={docsUrl}
-            className="w-full flex-1 border-none"
-            title="Swagger Spec Documentation iframe"
-          />
-        )}
-      </div>
-    </div>
-  );
-};
-
-// ==========================================================================
-// 11. ADMIN PAGE (feature flags persisted to the financial profile)
-// ==========================================================================
-const DEFAULT_FLAGS = {
-  monteCarlo: true,
-  avalanche: true,
-  insuranceCheck: false,
-  verboseTrace: true,
-};
-
-export const AdminPage: React.FC = () => {
-  const [flags, setFlags] = useState<Record<string, boolean>>(DEFAULT_FLAGS);
-  const [status, setStatus] = useState<'loading' | 'idle' | 'saving' | 'error'>('loading');
-
-  useEffect(() => {
-    apiService.getProfile()
-      .then(profile => {
-        const saved = profile.financial_preferences?.feature_flags;
-        if (saved) setFlags({ ...DEFAULT_FLAGS, ...saved });
-        setStatus('idle');
-      })
-      .catch(() => setStatus('error'));
-  }, []);
-
-  const toggle = async (key: string, value: boolean) => {
-    const next = { ...flags, [key]: value };
-    setFlags(next);
-    setStatus('saving');
-    try {
-      await apiService.updateProfile({ financial_preferences: { feature_flags: next } });
-      setStatus('idle');
-    } catch {
-      setStatus('error');
-    }
-  };
-
-  const rows: { key: keyof typeof DEFAULT_FLAGS; label: string; desc: string }[] = [
-    { key: 'monteCarlo', label: 'Stochastic Monte Carlo Projection', desc: 'Enable multi-path simulator models.' },
-    { key: 'avalanche', label: 'Auto-Avalanche calculations', desc: 'Rank card repayments systematically.' },
-    { key: 'insuranceCheck', label: 'Stricter Insurance Audits', desc: 'Force verification of medical term limits.' },
-    { key: 'verboseTrace', label: 'Verbose Agent Traces', desc: 'Persist full reasoning chains for every council reply.' },
-  ];
-
-  return (
-    <div className="space-y-6 select-none animate-in fade-in duration-300">
-      <div>
-        <h2 className="font-serif text-2xl font-medium text-brand-navy">System Administration</h2>
-        <p className="text-xs text-brand-graphite/50">Feature flags stored in your profile preferences on the backend.</p>
-      </div>
-
-      <div className="bg-white border border-black/5 rounded-2xl p-6 shadow-premium max-w-md space-y-5">
-        <div className="flex justify-between items-center">
-          <span className="text-[11px] font-bold text-[#c09a5f] uppercase tracking-wider">Operational Flags</span>
-          <span className="text-[9px] font-bold uppercase tracking-wider text-brand-graphite/40">
-            {status === 'saving' ? 'Saving…' : status === 'error' ? 'Save failed' : status === 'loading' ? 'Loading…' : 'Synced'}
-          </span>
-        </div>
-
-        <div className="space-y-4 text-xs font-semibold text-brand-navy">
-          {rows.map(row => (
-            <div key={row.key} className="flex justify-between items-center border-b border-black/[0.02] pb-2">
-              <div>
-                <span>{row.label}</span>
-                <span className="block text-[9px] text-brand-graphite/40 font-normal">{row.desc}</span>
-              </div>
-              <input
-                type="checkbox"
-                checked={flags[row.key]}
-                disabled={status === 'loading'}
-                onChange={e => toggle(row.key, e.target.checked)}
-                className="accent-[#c09a5f]"
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ==========================================================================
-// 12. SETTINGS PAGE (live user account + financial profile + sessions)
+// 5. SETTINGS PAGE (live user account + financial profile + sessions)
 // ==========================================================================
 interface SettingsPageProps {
   user: User | null;
@@ -1475,15 +818,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ user, onUserUpdated 
           </div>
           {profile ? (
             <div className="grid grid-cols-2 gap-4 text-xs">
+              {/* Every amount in the app is rendered in rupees, so the base
+                  currency is fixed rather than selectable. */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-[9px] text-brand-graphite/40 uppercase font-bold tracking-wider">Base Currency</span>
-                <select
-                  className="bg-black/5 rounded-lg px-3 py-2 font-semibold outline-none"
-                  value={profile.currency}
-                  onChange={e => saveProfileField('currency', e.target.value)}
-                >
-                  {['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD'].map(c => <option key={c}>{c}</option>)}
-                </select>
+                <span className="rounded-lg bg-black/5 px-3 py-2 font-semibold text-brand-graphite/70">
+                  Indian Rupee ({CURRENCY_SYMBOL})
+                </span>
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="text-[9px] text-brand-graphite/40 uppercase font-bold tracking-wider">Risk Profile</span>

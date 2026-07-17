@@ -27,7 +27,7 @@ class Income(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditMixin, B
         String(100), nullable=False
     )  # Salary, Freelance, Rental, etc.
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     frequency: Mapped[str] = mapped_column(
         String(50), nullable=False
     )  # ONE_TIME, WEEKLY, BI_WEEKLY, MONTHLY, YEARLY

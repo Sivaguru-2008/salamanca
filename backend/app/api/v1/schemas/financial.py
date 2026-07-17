@@ -25,7 +25,7 @@ class FinancialProfileRead(BaseModel):
 
 
 class FinancialProfileCreate(BaseModel):
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     country: str = Field(default="", max_length=100)
     risk_profile: str = Field(default="MEDIUM", max_length=50)
     financial_literacy_level: str = Field(default="BEGINNER", max_length=50)
@@ -63,7 +63,7 @@ class IncomeRead(BaseModel):
 class IncomeCreate(BaseModel):
     source: str = Field(..., max_length=100)
     amount: Decimal = Field(..., gt=0)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     frequency: str = Field(..., max_length=50)  # ONE_TIME, WEEKLY, BI_WEEKLY, MONTHLY, YEARLY
     is_recurring: bool = Field(default=True)
     start_date: date
@@ -102,7 +102,7 @@ class ExpenseCreate(BaseModel):
     category: str = Field(..., max_length=100)  # Housing, Food, etc.
     expense_type: str = Field(..., max_length=50)  # FIXED, VARIABLE, RECURRING
     amount: Decimal = Field(..., gt=0)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     is_recurring: bool = Field(default=False)
     due_date: date | None = None
     description: str | None = Field(default=None, max_length=255)
@@ -137,7 +137,7 @@ class AssetCreate(BaseModel):
     name: str = Field(..., max_length=255)
     type: str = Field(..., max_length=100)  # Cash, Bank accounts, FD, Gold, etc.
     current_value: Decimal = Field(..., ge=0)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     details: dict[str, Any] | None = None
 
 
@@ -168,7 +168,7 @@ class LiabilityCreate(BaseModel):
     name: str = Field(..., max_length=255)
     type: str = Field(..., max_length=100)  # Credit Cards, Personal Loans, etc.
     outstanding_balance: Decimal = Field(..., ge=0)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     details: dict[str, Any] | None = None
 
 
@@ -299,7 +299,7 @@ class InvestmentCreate(BaseModel):
     quantity: Decimal | None = Field(default=None, ge=0)
     purchase_price: Decimal | None = Field(default=None, ge=0)
     ticker: str | None = Field(default=None, max_length=50)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     last_updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -337,7 +337,7 @@ class SavingsGoalCreate(BaseModel):
     target_amount: Decimal = Field(..., gt=0)
     target_date: date
     current_progress: Decimal = Field(default=Decimal("0.00"), ge=0)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
 
 
 class SavingsGoalUpdate(BaseModel):
@@ -390,6 +390,8 @@ class TransactionRead(BaseModel):
     currency: str
     transaction_date: datetime
     description: str | None = None
+    payment_method: str
+    status: str
     reference_id: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -399,9 +401,11 @@ class TransactionCreate(BaseModel):
     type: str = Field(..., max_length=50)  # Income, Expense, Transfer, etc.
     category: str = Field(..., max_length=100)
     amount: Decimal = Field(..., gt=0)
-    currency: str = Field(default="USD", max_length=3)
+    currency: str = Field(default="INR", max_length=3)
     transaction_date: datetime = Field(default_factory=datetime.utcnow)
     description: str | None = Field(default=None, max_length=255)
+    payment_method: str = Field(default="Bank Transfer", max_length=50)
+    status: str = Field(default="Completed", max_length=20)
     reference_id: str | None = Field(default=None, max_length=100)
 
 
@@ -412,7 +416,20 @@ class TransactionUpdate(BaseModel):
     currency: str | None = Field(default=None, max_length=3)
     transaction_date: datetime | None = None
     description: str | None = Field(default=None, max_length=255)
+    payment_method: str | None = Field(default=None, max_length=50)
+    status: str | None = Field(default=None, max_length=20)
     reference_id: str | None = Field(default=None, max_length=100)
+
+
+class TransactionPage(BaseModel):
+    """Server-side search/filter/sort/pagination envelope for the ledger table."""
+
+    items: list[TransactionRead]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    categories: list[str]  # every category the user has, for the filter control
 
 
 # --- Budget ---
@@ -443,9 +460,37 @@ class BudgetUpdate(BaseModel):
     budget_alerts: dict[str, Any] | None = None
 
 
+# --- Financial Data (user-entered monthly figures) ---
+class FinancialDataRead(BaseModel):
+    monthly_salary: Decimal
+    other_monthly_income: Decimal
+    monthly_expenses: Decimal
+    current_savings: Decimal
+    existing_investments: Decimal
+    current_bank_balance: Decimal
+    has_data: bool  # false until the user submits for the first time
+    updated_at: datetime | None = None
+
+
+class FinancialDataWrite(BaseModel):
+    """Every field is mandatory and non-negative; salary must be productive.
+
+    Pydantic rejects non-numeric and missing values before the service runs, so
+    the client and API agree on one validation contract.
+    """
+
+    monthly_salary: Decimal = Field(..., gt=0, le=Decimal("1000000000"))
+    other_monthly_income: Decimal = Field(..., ge=0, le=Decimal("1000000000"))
+    monthly_expenses: Decimal = Field(..., ge=0, le=Decimal("1000000000"))
+    current_savings: Decimal = Field(..., ge=0, le=Decimal("1000000000"))
+    existing_investments: Decimal = Field(..., ge=0, le=Decimal("1000000000"))
+    current_bank_balance: Decimal = Field(..., ge=0, le=Decimal("1000000000"))
+
+
 # --- Financial Health Score ---
 class HealthScoreMetricBreakdown(BaseModel):
     score: float
+    weight: float
     raw_value: str
     target: str
     explanation: str
@@ -453,21 +498,64 @@ class HealthScoreMetricBreakdown(BaseModel):
 
 class HealthScoreRead(BaseModel):
     score: float
-    grade: str
+    grade: str  # EXCELLENT | VERY_GOOD | GOOD | NEEDS_IMPROVEMENT | POOR
+    grade_label: str  # "Excellent" | "Very Good" | ...
     breakdown: dict[str, HealthScoreMetricBreakdown]
+    strengths: list[str]
+    areas_to_improve: list[str]
+    insights: list[str]
     recommendations: list[str]
+    has_data: bool
 
 
 # --- Dashboard Summary ---
+class TrendDelta(BaseModel):
+    """A card's movement: absolute change plus the percentage it represents."""
+
+    today: Decimal
+    month: Decimal
+    month_pct: float
+
+
+class MonthlyOverview(BaseModel):
+    monthly_salary: Decimal
+    other_monthly_income: Decimal
+    total_monthly_income: Decimal
+    monthly_expenses: Decimal
+    monthly_savings: Decimal
+    savings_rate: float
+    net_monthly_cash_flow: Decimal
+
+
+class FinancialSummary(BaseModel):
+    current_balance: Decimal
+    monthly_savings: Decimal
+    monthly_expenses: Decimal
+    investment_value: Decimal
+    debt: Decimal
+    emergency_fund_months: float
+    emergency_fund_status: str  # Not Started | Building | Adequate | Fully Funded
+    net_worth_trend: Decimal  # net worth movement over the trailing month
+    net_worth_trend_pct: float
+
+
 class DashboardSummaryRead(BaseModel):
     net_worth: Decimal
-    total_assets: Decimal
+    total_assets: Decimal  # everything owned, investments included
+    liquid_assets: Decimal  # cash, bank and savings only
     total_liabilities: Decimal
     monthly_income: Decimal
     monthly_expense: Decimal
     monthly_savings_rate: float
     recent_transactions: list[TransactionRead]
     savings_goals_progress: list[SavingsGoalRead]
+    net_worth_trend: TrendDelta
+    liquid_trend: TrendDelta
+    debt_trend: TrendDelta
+    health_trend: TrendDelta
+    monthly_overview: MonthlyOverview
+    financial_summary: FinancialSummary
+    has_data: bool
 
 
 # --- Analytics Summary ---

@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "fios-backend",
+      "cwd": "backend",
+      "runtimeExecutable": "C:\\Users\\SIVAGURU R.M\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--reload", "--port", "8000"],
+      "port": 8000
+    },
+    {
       "name": "fios-frontend",
       "cwd": "frontend",
       "runtimeExecutable": "npm",

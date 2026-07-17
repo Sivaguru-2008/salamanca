@@ -22,7 +22,7 @@ class FinancialProfile(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Aud
     user_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
     )
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     country: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     risk_profile: Mapped[str] = mapped_column(
         String(50), nullable=False, default="MEDIUM"

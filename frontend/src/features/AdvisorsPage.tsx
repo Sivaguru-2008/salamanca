@@ -18,12 +18,12 @@ interface AdvisorsPageProps {
   chats: Record<string, AdvisorMessage[]>;
   onAddMessage: (agentId: string, msg: AdvisorMessage) => void;
   onHydrateAgent: (agentId: string) => void;
-  snapshot: any;
-  health: any;
+  /** The user's live financial figures, sent with every question. */
+  context: Record<string, unknown>;
 }
 
 export const AdvisorsPage: React.FC<AdvisorsPageProps> = ({
-  chats, onAddMessage, onHydrateAgent, snapshot, health
+  chats, onAddMessage, onHydrateAgent, context
 }) => {
   const [activeId, setActiveId] = useState<string>('advisor');
   const [input, setInput] = useState('');
@@ -64,17 +64,6 @@ export const AdvisorsPage: React.FC<AdvisorsPageProps> = ({
     onAddMessage(activeId, userMsg);
 
     try {
-      const context = {
-        savingsRate: health.savingsRate,
-        totalDebt: snapshot.totalDebt,
-        totalSavings: snapshot.totalSavings,
-        monthlyIncome: snapshot.monthlyIncome,
-        monthlyExpenses: snapshot.monthlyExpenses,
-        housing: snapshot.housing,
-        lifestyle: snapshot.lifestyle,
-        healthScore: health.score,
-        healthGrade: health.grade
-      };
       const response = await apiService.sendAdvisorMessage(activeId, userText, context);
       onAddMessage(activeId, response);
     } catch (e) {

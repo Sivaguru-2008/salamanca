@@ -16,7 +16,7 @@ class TestFinancialProfile:
         response = await client.get("/api/v1/financial/profile", headers=headers)
         assert response.status_code == 200
         body = response.json()
-        assert body["currency"] == "USD"
+        assert body["currency"] == "INR"
         assert body["risk_profile"] == "MEDIUM"
         assert body["financial_literacy_level"] == "BEGINNER"
 
@@ -53,7 +53,7 @@ class TestIncomes:
             json={
                 "source": "Freelance Work",
                 "amount": "1000.00",
-                "currency": "USD",
+                "currency": "INR",
                 "frequency": "WEEKLY",
                 "is_recurring": True,
                 "start_date": str(date.today()),
@@ -104,7 +104,7 @@ class TestIncomes:
             json={
                 "source": "Freelance Work",
                 "amount": "-500.00",
-                "currency": "USD",
+                "currency": "INR",
                 "frequency": "WEEKLY",
                 "is_recurring": True,
                 "start_date": str(date.today()),
@@ -139,7 +139,7 @@ class TestExpensesAndBudgets:
                 "category": "Food",
                 "expense_type": "VARIABLE",
                 "amount": "50.00",
-                "currency": "USD",
+                "currency": "INR",
                 "is_recurring": False,
             },
             headers=headers,
@@ -162,7 +162,7 @@ class TestExpensesAndBudgets:
                 "category": "Food",
                 "expense_type": "VARIABLE",
                 "amount": "60.00",
-                "currency": "USD",
+                "currency": "INR",
                 "is_recurring": False,
             },
             headers=headers,
@@ -194,7 +194,7 @@ class TestAssetsAndLiabilities:
                 "name": "Checking Account",
                 "type": "Bank accounts",
                 "current_value": "5000.00",
-                "currency": "USD",
+                "currency": "INR",
             },
             headers=headers,
         )
@@ -221,7 +221,7 @@ class TestAssetsAndLiabilities:
                 "name": "Visa CC",
                 "type": "Credit Cards",
                 "outstanding_balance": "1200.00",
-                "currency": "USD",
+                "currency": "INR",
             },
             headers=headers,
         )
@@ -312,7 +312,7 @@ class TestInvestmentsAndGoals:
                 "type": "Mutual Funds",
                 "amount_invested": "1000.00",
                 "current_value": "1150.00",
-                "currency": "USD",
+                "currency": "INR",
             },
             headers=headers,
         )
@@ -366,7 +366,7 @@ class TestTransactionsAndSideEffects:
                 "type": "Loan Payment",
                 "category": "Debt Payment",
                 "amount": "200.00",
-                "currency": "USD",
+                "currency": "INR",
                 "reference_id": loan_id,
             },
             headers=headers,
@@ -396,13 +396,13 @@ class TestFinancialIntelligenceDashboards:
                 "name": "Savings",
                 "type": "Bank accounts",
                 "current_value": "10000.00",
-                "currency": "USD",
+                "currency": "INR",
             },
             headers=headers,
         )
         await client.post(
             "/api/v1/financial/assets",
-            json={"name": "Cash", "type": "Cash", "current_value": "2000.00", "currency": "USD"},
+            json={"name": "Cash", "type": "Cash", "current_value": "2000.00", "currency": "INR"},
             headers=headers,
         )
 
@@ -413,7 +413,7 @@ class TestFinancialIntelligenceDashboards:
                 "name": "Credit Card",
                 "type": "Credit Cards",
                 "outstanding_balance": "2000.00",
-                "currency": "USD",
+                "currency": "INR",
             },
             headers=headers,
         )

@@ -16,6 +16,13 @@ LOAN_DOC = (
     "Prepayment is permitted without penalty after the sixth installment."
 )
 
+RECIPE_DOC = (
+    "CLASSIC TOMATO SOUP\n\n"
+    "Roast six tomatoes with olive oil until the skins blister.\n\n"
+    "Blend with basil and cream, then simmer for twenty minutes.\n\n"
+    "Season to taste and serve with toasted sourdough."
+)
+
 
 async def _auth(client: AsyncClient, email: str) -> dict[str, str]:
     await register_user(client, email=email)
@@ -67,6 +74,41 @@ class TestDocumentUpload:
             headers=headers,
         )
         assert response.status_code == 400
+
+    async def test_upload_stores_classification_metadata(self, client: AsyncClient) -> None:
+        headers = await _auth(client, "docsclass@example.com")
+        response = await client.post(
+            "/api/v1/documents/upload",
+            files={"file": ("loan.txt", LOAN_DOC.encode(), "text/plain")},
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        meta = response.json()["metadata_json"]
+        assert meta["domain"] == "finance"
+        assert meta["category"] == "Loan Agreement"
+        assert 0 < meta["confidence"] <= 1
+        assert meta["filename"] == "loan.txt"
+        # Pre-existing metadata survives alongside the new keys.
+        assert meta["file_hash"] and meta["num_chunks"] >= 1
+
+    async def test_upload_rejects_non_financial_document(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        headers = await _auth(client, "docsrecipe@example.com")
+        response = await client.post(
+            "/api/v1/documents/upload",
+            files={"file": ("soup.txt", RECIPE_DOC.encode(), "text/plain")},
+            headers=headers,
+        )
+        assert response.status_code == 400
+        assert "only financial documents" in response.json()["detail"]
+
+        # Nothing was persisted: no row, and no orphaned file on disk.
+        listing = await client.get("/api/v1/financial/documents", headers=headers)
+        assert listing.json() == []
+        uploads = tmp_path / "uploads"
+        stored = list(uploads.rglob("*")) if uploads.exists() else []
+        assert [p for p in stored if p.is_file()] == []
 
     async def test_search_returns_real_scores(self, client: AsyncClient) -> None:
         headers = await _auth(client, "docsearch@example.com")

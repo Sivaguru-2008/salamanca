@@ -32,7 +32,7 @@ class SavingsGoal(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditMix
     current_progress: Mapped[Decimal] = mapped_column(
         Numeric(15, 2), nullable=False, default=Decimal("0.00")
     )
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
 
     user = relationship("User")
 

@@ -33,21 +33,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   const items = [
     { id: 'dashboard', label: 'Go to Dashboard Summary', category: 'Pages', icon: Compass },
-    { id: 'twin', label: 'Go to Financial Twin Projections', category: 'Pages', icon: Compass },
     { id: 'advisors', label: 'Talk to the AI Advisor Council', category: 'Pages', icon: Sparkles },
     { id: 'loan', label: 'Open Loan Document Analyzer', category: 'Pages', icon: Compass },
-    { id: 'tracker', label: 'Open Budget Envelope Tracker', category: 'Pages', icon: Compass },
-    { id: 'goals', label: 'Open Goal Planner', category: 'Pages', icon: Compass },
     { id: 'investment', label: 'Check Investment Portfolios', category: 'Pages', icon: Compass },
     { id: 'monitoring', label: 'Check Live Alert Monitors', category: 'Pages', icon: Compass },
-    { id: 'graph', label: 'Check Interactive Knowledge Graph', category: 'Pages', icon: Compass },
     { id: 'rag', label: 'Open RAG Context Explorer', category: 'Pages', icon: Compass },
     { id: 'decisions', label: 'Replay Council Decision Log', category: 'Pages', icon: Terminal },
-    { id: 'memory', label: 'Inspect Financial Memory Store', category: 'Pages', icon: Compass },
-    { id: 'simulator', label: 'Run Monte Carlo Simulator', category: 'Pages', icon: Compass },
-    { id: 'observability', label: 'Open Agent execution traces', category: 'Pages', icon: Terminal },
-    { id: 'console', label: 'Open Developer Playground Console', category: 'Pages', icon: Terminal },
-    { id: 'admin', label: 'Open Administration Panels', category: 'Pages', icon: Shield },
     { id: 'settings', label: 'Open System Settings', category: 'Pages', icon: Shield }
   ];
 

@@ -28,7 +28,7 @@ class Expense(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditMixin, 
         String(50), nullable=False
     )  # FIXED, VARIABLE, RECURRING
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     normalized_monthly_amount: Mapped[Decimal] = mapped_column(

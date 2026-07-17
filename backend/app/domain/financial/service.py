@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import itertools
+import statistics
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationAppError
+from app.core.filtering import FieldFilter, FilterOperator, SortField
 from app.infra.db.models.asset import Asset
 from app.infra.db.models.budget import Budget
 from app.infra.db.models.expense import Expense
@@ -36,6 +39,104 @@ from app.infra.db.repositories.financial import (
 )
 from app.utils.datetime import utc_now
 
+# Canonical record identities behind the dashboard's Financial Data Upload form.
+# The form is a view over real domain rows, so the summary, health score, and AI
+# council all read the same numbers the user typed.
+SALARY_SOURCE = "Monthly Salary"
+OTHER_INCOME_SOURCE = "Other Monthly Income"
+UPLOAD_EXPENSE_CATEGORY = "Monthly Expenses"
+SAVINGS_ASSET_NAME = "Current Savings"
+SAVINGS_ASSET_TYPE = "Savings"
+BANK_ASSET_NAME = "Current Bank Balance"
+BANK_ASSET_TYPE = "Bank accounts"
+INVESTMENT_NAME = "Existing Investments"
+INVESTMENT_TYPE = "Portfolio"
+
+# Assets that can be drawn on within days — the emergency-fund denominator.
+LIQUID_ASSET_TYPES = ("Cash", "Bank accounts", "Savings")
+# Assets held as spendable balance rather than earmarked savings.
+BALANCE_ASSET_TYPES = ("Cash", "Bank accounts")
+
+INFLOW_TX_TYPES = ("Income", "Refund")
+OUTFLOW_TX_TYPES = ("Expense", "Investment", "Loan Payment", "Insurance Premium")
+
+ZERO = Decimal("0.00")
+
+GRADE_LABELS = {
+    "EXCELLENT": "Excellent",
+    "VERY_GOOD": "Very Good",
+    "GOOD": "Good",
+    "NEEDS_IMPROVEMENT": "Needs Improvement",
+    "POOR": "Poor",
+}
+
+# Weights sum to 100. A metric that cannot be measured yet (no transaction
+# history) drops out and the remainder is renormalised, so a new account is not
+# punished for data it has had no chance to produce.
+METRIC_WEIGHTS = {
+    "savings_rate": 30.0,
+    "debt_to_income": 25.0,
+    "emergency_fund": 15.0,
+    "expense_stability": 10.0,
+    "investment_ratio": 10.0,
+    "cash_flow_trend": 10.0,
+}
+
+METRIC_LABELS = {
+    "savings_rate": "Savings rate",
+    "debt_to_income": "Debt-to-income ratio",
+    "emergency_fund": "Emergency fund",
+    "expense_stability": "Expense stability",
+    "investment_ratio": "Investment allocation",
+    "cash_flow_trend": "Cash flow trend",
+}
+
+
+def _rupees(value: Decimal | float) -> str:
+    """₹1,25,000 — Indian digit grouping for figures embedded in generated text.
+
+    Python's locale support cannot be relied on inside a container, so the
+    lakh/crore grouping is applied directly.
+    """
+    num = round(float(value))
+    sign = "-" if num < 0 else ""
+    digits = str(abs(num))
+    if len(digits) <= 3:
+        return f"{sign}₹{digits}"
+    head, tail = digits[:-3], digits[-3:]
+    groups: list[str] = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    if head:
+        groups.insert(0, head)
+    return f"{sign}₹{','.join(groups)},{tail}"
+
+
+def _band(value: float, points: list[tuple[float, float]]) -> float:
+    """Piecewise-linear score from ``points`` given as ascending (value, score).
+
+    Interpolating instead of using fixed buckets means a small real improvement
+    always moves the score, rather than the user sitting on a cliff edge.
+    """
+    if value <= points[0][0]:
+        return points[0][1]
+    if value >= points[-1][0]:
+        return points[-1][1]
+    for (x0, y0), (x1, y1) in itertools.pairwise(points):
+        if x0 <= value <= x1:
+            if x1 == x0:
+                return y1
+            return y0 + (value - x0) / (x1 - x0) * (y1 - y0)
+    return points[-1][1]
+
+
+def _pct_change(current: Decimal, previous: Decimal) -> float:
+    """Percentage movement, guarding the divide-by-zero opening balance."""
+    if previous == 0:
+        return 0.0 if current == 0 else 100.0
+    return float((current - previous) / abs(previous) * 100)
+
 
 class FinancialService:
     def __init__(self, session: AsyncSession) -> None:
@@ -60,7 +161,7 @@ class FinancialService:
             # Create default profile
             profile = FinancialProfile(
                 user_id=user_id,
-                currency="USD",
+                currency="INR",
                 country="",
                 risk_profile="MEDIUM",
                 financial_literacy_level="BEGINNER",
@@ -81,6 +182,207 @@ class FinancialService:
             await self.profiles.update(profile, **values)
             await self.session.refresh(profile)
         return profile
+
+    # --- Financial Data Upload ---
+    # The six figures the user types on the dashboard are stored as ordinary
+    # Income / Expense / Asset / Investment rows rather than a preferences blob,
+    # so there is exactly one source of truth to calculate from.
+    def _uf(self, user_id: uuid.UUID) -> list[FieldFilter]:
+        return [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+
+    async def _upsert_income(
+        self, user_id: uuid.UUID, source: str, amount: Decimal, actor_id: uuid.UUID | None
+    ) -> None:
+        existing = await self.incomes.get_by(user_id=user_id, source=source)
+        if amount > 0:
+            if existing is not None:
+                await self.incomes.update(
+                    existing,
+                    amount=amount,
+                    frequency="MONTHLY",
+                    is_recurring=True,
+                    normalized_monthly_amount=amount,
+                    updated_by=actor_id or user_id,
+                )
+            else:
+                await self.incomes.add(
+                    Income(
+                        user_id=user_id,
+                        source=source,
+                        amount=amount,
+                        currency="INR",
+                        frequency="MONTHLY",
+                        is_recurring=True,
+                        start_date=utc_now().date(),
+                        normalized_monthly_amount=amount,
+                        created_by=actor_id or user_id,
+                    )
+                )
+        elif existing is not None:
+            # Entering 0 means "I don't have this" — retire the row so it stops
+            # counting toward monthly income.
+            await self.incomes.soft_delete(existing)
+
+    async def _upsert_expense(
+        self, user_id: uuid.UUID, category: str, amount: Decimal, actor_id: uuid.UUID | None
+    ) -> None:
+        existing = await self.expenses.get_by(user_id=user_id, category=category)
+        if amount > 0:
+            if existing is not None:
+                await self.expenses.update(
+                    existing,
+                    amount=amount,
+                    normalized_monthly_amount=amount,
+                    is_recurring=True,
+                    updated_by=actor_id or user_id,
+                )
+            else:
+                await self.expenses.add(
+                    Expense(
+                        user_id=user_id,
+                        category=category,
+                        expense_type="RECURRING",
+                        amount=amount,
+                        currency="INR",
+                        is_recurring=True,
+                        normalized_monthly_amount=amount,
+                        description="Declared monthly expenses",
+                        created_by=actor_id or user_id,
+                    )
+                )
+        elif existing is not None:
+            await self.expenses.soft_delete(existing)
+
+    async def _upsert_asset(
+        self,
+        user_id: uuid.UUID,
+        name: str,
+        asset_type: str,
+        value: Decimal,
+        actor_id: uuid.UUID | None,
+    ) -> None:
+        existing = await self.assets.get_by(user_id=user_id, name=name)
+        if value > 0:
+            if existing is not None:
+                await self.assets.update(
+                    existing, current_value=value, type=asset_type, updated_by=actor_id or user_id
+                )
+            else:
+                await self.assets.add(
+                    Asset(
+                        user_id=user_id,
+                        name=name,
+                        type=asset_type,
+                        current_value=value,
+                        currency="INR",
+                        created_by=actor_id or user_id,
+                    )
+                )
+        elif existing is not None:
+            await self.assets.soft_delete(existing)
+
+    async def _upsert_investment(
+        self, user_id: uuid.UUID, name: str, value: Decimal, actor_id: uuid.UUID | None
+    ) -> None:
+        existing = await self.investments.get_by(user_id=user_id, name=name)
+        if value > 0:
+            if existing is not None:
+                await self.investments.update(
+                    existing,
+                    current_value=value,
+                    amount_invested=value,
+                    last_updated_at=utc_now(),
+                    updated_by=actor_id or user_id,
+                )
+            else:
+                await self.investments.add(
+                    Investment(
+                        user_id=user_id,
+                        name=name,
+                        type=INVESTMENT_TYPE,
+                        amount_invested=value,
+                        current_value=value,
+                        currency="INR",
+                        last_updated_at=utc_now(),
+                        created_by=actor_id or user_id,
+                    )
+                )
+        elif existing is not None:
+            await self.investments.soft_delete(existing)
+
+    async def get_financial_data(self, user_id: uuid.UUID) -> dict[str, Any]:
+        salary = await self.incomes.get_by(user_id=user_id, source=SALARY_SOURCE)
+        other = await self.incomes.get_by(user_id=user_id, source=OTHER_INCOME_SOURCE)
+        expense = await self.expenses.get_by(user_id=user_id, category=UPLOAD_EXPENSE_CATEGORY)
+        savings = await self.assets.get_by(user_id=user_id, name=SAVINGS_ASSET_NAME)
+        bank = await self.assets.get_by(user_id=user_id, name=BANK_ASSET_NAME)
+        investments = await self.investments.get_by(user_id=user_id, name=INVESTMENT_NAME)
+
+        rows = [r for r in (salary, other, expense, savings, bank, investments) if r is not None]
+        updated_at = max((r.updated_at for r in rows), default=None)
+
+        return {
+            "monthly_salary": salary.amount if salary else ZERO,
+            "other_monthly_income": other.amount if other else ZERO,
+            "monthly_expenses": expense.amount if expense else ZERO,
+            "current_savings": savings.current_value if savings else ZERO,
+            "existing_investments": investments.current_value if investments else ZERO,
+            "current_bank_balance": bank.current_value if bank else ZERO,
+            "has_data": salary is not None,
+            "updated_at": updated_at,
+        }
+
+    async def save_financial_data(
+        self, user_id: uuid.UUID, data: dict[str, Any], actor_id: uuid.UUID | None = None
+    ) -> dict[str, Any]:
+        fields = (
+            "monthly_salary",
+            "other_monthly_income",
+            "monthly_expenses",
+            "current_savings",
+            "existing_investments",
+            "current_bank_balance",
+        )
+        values: dict[str, Decimal] = {}
+        for field in fields:
+            raw = data.get(field)
+            if raw is None or raw == "":
+                raise ValidationAppError(f"'{field.replace('_', ' ')}' is required.")
+            try:
+                amount = Decimal(str(raw))
+            except (ArithmeticError, ValueError) as exc:
+                raise ValidationAppError(f"'{field.replace('_', ' ')}' must be a number.") from exc
+            if not amount.is_finite():
+                raise ValidationAppError(f"'{field.replace('_', ' ')}' must be a number.")
+            if amount < 0:
+                raise ValidationAppError(f"'{field.replace('_', ' ')}' cannot be negative.")
+            values[field] = amount
+
+        if values["monthly_salary"] <= 0:
+            raise ValidationAppError("Monthly salary must be greater than zero.")
+
+        await self._upsert_income(user_id, SALARY_SOURCE, values["monthly_salary"], actor_id)
+        await self._upsert_income(
+            user_id, OTHER_INCOME_SOURCE, values["other_monthly_income"], actor_id
+        )
+        await self._upsert_expense(
+            user_id, UPLOAD_EXPENSE_CATEGORY, values["monthly_expenses"], actor_id
+        )
+        await self._upsert_asset(
+            user_id, SAVINGS_ASSET_NAME, SAVINGS_ASSET_TYPE, values["current_savings"], actor_id
+        )
+        await self._upsert_asset(
+            user_id, BANK_ASSET_NAME, BANK_ASSET_TYPE, values["current_bank_balance"], actor_id
+        )
+        await self._upsert_investment(
+            user_id, INVESTMENT_NAME, values["existing_investments"], actor_id
+        )
+
+        # Snapshot the resulting score so the health card has a baseline to
+        # measure tomorrow's movement against.
+        await self._record_health_snapshot(user_id)
+
+        return await self.get_financial_data(user_id)
 
     # --- Income ---
     def normalize_income(self, amount: Decimal, frequency: str) -> Decimal:
@@ -113,7 +415,7 @@ class FinancialService:
             user_id=user_id,
             source=data["source"],
             amount=amount,
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             frequency=freq,
             is_recurring=data.get("is_recurring", True),
             start_date=data["start_date"],
@@ -171,7 +473,7 @@ class FinancialService:
             category=data["category"],
             expense_type=data["expense_type"],
             amount=amount,
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             is_recurring=data.get("is_recurring", False),
             due_date=data.get("due_date"),
             normalized_monthly_amount=norm_amt,
@@ -230,7 +532,7 @@ class FinancialService:
             name=data["name"],
             type=data["type"],
             current_value=val,
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             details=data.get("details"),
             created_by=actor_id or user_id,
         )
@@ -277,7 +579,7 @@ class FinancialService:
             name=data["name"],
             type=data["type"],
             outstanding_balance=bal,
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             details=data.get("details"),
             created_by=actor_id or user_id,
         )
@@ -464,7 +766,7 @@ class FinancialService:
                 else None
             ),
             ticker=data.get("ticker"),
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             last_updated_at=data.get("last_updated_at") or utc_now(),
             created_by=actor_id or user_id,
         )
@@ -524,7 +826,7 @@ class FinancialService:
             target_amount=target,
             target_date=data["target_date"],
             current_progress=prog,
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             created_by=actor_id or user_id,
         )
         await self.savings_goals.add(sg)
@@ -619,7 +921,7 @@ class FinancialService:
             type=tx_type,
             category=data["category"],
             amount=amount,
-            currency=data.get("currency", "USD"),
+            currency=data.get("currency", "INR"),
             transaction_date=data.get("transaction_date") or utc_now(),
             description=data.get("description"),
             reference_id=data.get("reference_id"),
@@ -638,7 +940,7 @@ class FinancialService:
                 name="Cash Wallet",
                 type="Cash",
                 current_value=Decimal("0.00"),
-                currency=data.get("currency", "USD"),
+                currency=data.get("currency", "INR"),
             )
             await self.assets.add(cash_asset)
 
@@ -851,54 +1153,306 @@ class FinancialService:
 
         await self.budgets.update(budget, budget_utilization=util, budget_alerts=alerts)
 
+    # --- Transaction ledger query (search / filter / sort / paginate) ---
+    async def query_transactions(
+        self,
+        user_id: uuid.UUID,
+        *,
+        search: str | None = None,
+        category: str | None = None,
+        tx_type: str | None = None,
+        sort_by: str = "transaction_date",
+        sort_dir: str = "desc",
+        page: int = 1,
+        page_size: int = 10,
+    ) -> dict[str, Any]:
+        allowed_sorts = {"transaction_date", "amount", "category", "description", "status"}
+        if sort_by not in allowed_sorts:
+            raise ValidationAppError(f"Cannot sort by '{sort_by}'.")
+        if sort_dir not in ("asc", "desc"):
+            raise ValidationAppError("Sort direction must be 'asc' or 'desc'.")
+        page = max(1, page)
+        page_size = min(max(1, page_size), 100)
+
+        filters = self._uf(user_id)
+        if category and category.lower() != "all":
+            filters.append(
+                FieldFilter(field="category", operator=FilterOperator.EQ, value=category)
+            )
+        if tx_type and tx_type.lower() != "all":
+            filters.append(FieldFilter(field="type", operator=FilterOperator.EQ, value=tx_type))
+        if search:
+            filters.append(
+                FieldFilter(field="description", operator=FilterOperator.ILIKE, value=search)
+            )
+
+        sort = [SortField(field=sort_by, descending=sort_dir == "desc")]
+        items, total = await self.transactions.list(
+            filters=filters, sort=sort, limit=page_size, offset=(page - 1) * page_size
+        )
+
+        # Every category the user owns, so the filter control lists real options
+        # rather than a hardcoded enum. DISTINCT in the database rather than
+        # pulling the whole ledger back to deduplicate it here.
+        category_rows = await self.session.scalars(
+            select(Transaction.category)
+            .where(Transaction.user_id == user_id, Transaction.deleted_at.is_(None))
+            .distinct()
+            .order_by(Transaction.category)
+        )
+        categories = list(category_rows.all())
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-total // page_size)),
+            "categories": categories,
+        }
+
+    # --- Shared aggregation helpers ---
+    async def _core_figures(self, user_id: uuid.UUID) -> dict[str, Any]:
+        """The balance-sheet and cash-flow numbers every read model needs."""
+        uf = self._uf(user_id)
+
+        assets, _ = await self.assets.list(filters=uf, limit=1000)
+        liabs, _ = await self.liabilities.list(filters=uf, limit=1000)
+        loans_all, _ = await self.loans.list(filters=uf, limit=1000)
+        incomes, _ = await self.incomes.list(filters=uf, limit=1000)
+        expenses, _ = await self.expenses.list(filters=uf, limit=1000)
+        investments, _ = await self.investments.list(filters=uf, limit=1000)
+        txs, _ = await self.transactions.list(filters=uf, limit=10000)
+
+        loans = [ln for ln in loans_all if ln.status == "ACTIVE"]
+
+        # Investments are held in their own table but are still assets the user
+        # owns: leaving them out understates net worth by the whole portfolio.
+        investment_value = sum((i.current_value for i in investments), ZERO)
+        total_assets = sum((a.current_value for a in assets), ZERO) + investment_value
+
+        total_liabs = sum((liab.outstanding_balance for liab in liabs), ZERO)
+        total_loans = sum((ln.outstanding_balance for ln in loans), ZERO)
+        total_debt = total_liabs + total_loans
+
+        monthly_income = sum((i.normalized_monthly_amount for i in incomes), ZERO)
+        monthly_expense = sum((e.normalized_monthly_amount for e in expenses), ZERO)
+
+        return {
+            "assets": assets,
+            "liabilities": liabs,
+            "loans": loans,
+            "incomes": incomes,
+            "expenses": expenses,
+            "investments": investments,
+            "transactions": txs,
+            "total_assets": total_assets,
+            "total_debt": total_debt,
+            "net_worth": total_assets - total_debt,
+            "monthly_income": monthly_income,
+            "monthly_expense": monthly_expense,
+            # Drawable within days — the emergency-fund numerator.
+            "liquid_assets": sum(
+                (a.current_value for a in assets if a.type in LIQUID_ASSET_TYPES), ZERO
+            ),
+            # Spendable balance, excluding earmarked savings.
+            "current_balance": sum(
+                (a.current_value for a in assets if a.type in BALANCE_ASSET_TYPES), ZERO
+            ),
+            "investment_value": investment_value,
+            "total_loan_emi": sum((ln.emi for ln in loans), ZERO),
+        }
+
+    @staticmethod
+    def _monthly_flows(txs: list[Transaction]) -> dict[str, dict[str, Decimal]]:
+        """Net cash flow bucketed by YYYY-MM, oldest key first."""
+        flows: dict[str, dict[str, Decimal]] = {}
+        for tx in txs:
+            key = tx.transaction_date.strftime("%Y-%m")
+            bucket = flows.setdefault(key, {"income": ZERO, "expense": ZERO})
+            if tx.type in INFLOW_TX_TYPES:
+                bucket["income"] += tx.amount
+            elif tx.type in OUTFLOW_TX_TYPES:
+                bucket["expense"] += tx.amount
+        for bucket in flows.values():
+            bucket["net"] = bucket["income"] - bucket["expense"]
+        return dict(sorted(flows.items()))
+
+    @staticmethod
+    def _net_flow_since(txs: list[Transaction], since: Any) -> Decimal:
+        total = ZERO
+        for tx in txs:
+            if tx.transaction_date < since:
+                continue
+            if tx.type in INFLOW_TX_TYPES:
+                total += tx.amount
+            elif tx.type in OUTFLOW_TX_TYPES:
+                total -= tx.amount
+        return total
+
+    @staticmethod
+    def _debt_paid_since(txs: list[Transaction], since: Any) -> Decimal:
+        return sum(
+            (t.amount for t in txs if t.type == "Loan Payment" and t.transaction_date >= since),
+            ZERO,
+        )
+
     # --- Dashboard Summary ---
     async def get_dashboard_summary(self, user_id: uuid.UUID) -> dict[str, Any]:
-        from app.core.filtering import FieldFilter, FilterOperator
+        core = await self._core_figures(user_id)
+        txs: list[Transaction] = core["transactions"]
 
-        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+        now = utc_now()
+        start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_of_month = start_of_today.replace(day=1)
 
-        assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
-        user_assets = assets_list
-        total_assets = sum((a.current_value for a in user_assets), Decimal("0.00"))
+        monthly_income = core["monthly_income"]
+        monthly_expense = core["monthly_expense"]
+        monthly_savings = monthly_income - monthly_expense
+        savings_rate = float(monthly_savings / monthly_income) if monthly_income > 0 else 0.0
 
-        liabs_list, _ = await self.liabilities.list(filters=user_filter, limit=1000)
-        user_liabs = liabs_list
-        total_liabs = sum((liab.outstanding_balance for liab in user_liabs), Decimal("0.00"))
+        # Card movements come from the ledger: what actually moved money today
+        # and across the current month.
+        today_flow = self._net_flow_since(txs, start_of_today)
+        month_flow = self._net_flow_since(txs, start_of_month)
+        debt_today = self._debt_paid_since(txs, start_of_today)
+        debt_month = self._debt_paid_since(txs, start_of_month)
 
-        loans_list, _ = await self.loans.list(filters=user_filter, limit=1000)
-        user_loans = [ln for ln in loans_list if ln.status == "ACTIVE"]
-        total_loans = sum((ln.outstanding_balance for ln in user_loans), Decimal("0.00"))
+        net_worth = core["net_worth"]
+        net_worth_at_month_start = net_worth - month_flow
+        liquid = core["liquid_assets"]
+        total_debt = core["total_debt"]
 
-        net_worth = total_assets - (total_liabs + total_loans)
+        health = await self.get_health_score(user_id)
+        health_today, health_month = await self._health_deltas(user_id, health["score"])
 
-        incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
-        user_incomes = incomes_list
-        monthly_income = sum((i.normalized_monthly_amount for i in user_incomes), Decimal("0.00"))
+        emergency_months = (
+            float(liquid / monthly_expense) if monthly_expense > 0 else (6.0 if liquid > 0 else 0.0)
+        )
 
-        expenses_list, _ = await self.expenses.list(filters=user_filter, limit=1000)
-        user_expenses = expenses_list
-        monthly_expense = sum((e.normalized_monthly_amount for e in user_expenses), Decimal("0.00"))
-
-        savings_rate = 0.0
-        if monthly_income > 0:
-            savings_rate = float((monthly_income - monthly_expense) / monthly_income)
-
-        tx_list, _ = await self.transactions.list(filters=user_filter, limit=5, sort=[])
-        user_tx = tx_list
-
-        sg_list, _ = await self.savings_goals.list(filters=user_filter, limit=100)
-        user_sg = sg_list
+        recent_tx = sorted(txs, key=lambda t: t.transaction_date, reverse=True)[:5]
+        goals, _ = await self.savings_goals.list(filters=self._uf(user_id), limit=100)
 
         return {
             "net_worth": net_worth,
-            "total_assets": total_assets,
-            "total_liabilities": total_liabs + total_loans,
+            "total_assets": core["total_assets"],
+            "liquid_assets": liquid,
+            "total_liabilities": total_debt,
             "monthly_income": monthly_income,
             "monthly_expense": monthly_expense,
             "monthly_savings_rate": savings_rate,
-            "recent_transactions": user_tx,
-            "savings_goals_progress": user_sg,
+            "recent_transactions": recent_tx,
+            "savings_goals_progress": goals,
+            "net_worth_trend": {
+                "today": today_flow,
+                "month": month_flow,
+                "month_pct": _pct_change(net_worth, net_worth_at_month_start),
+            },
+            "liquid_trend": {
+                "today": today_flow,
+                "month": month_flow,
+                "month_pct": _pct_change(liquid, liquid - month_flow),
+            },
+            # Debt falls as it is repaid, so a repayment is a negative movement.
+            "debt_trend": {
+                "today": -debt_today,
+                "month": -debt_month,
+                "month_pct": _pct_change(total_debt, total_debt + debt_month),
+            },
+            "health_trend": {
+                "today": Decimal(str(round(health_today, 1))),
+                "month": Decimal(str(round(health_month, 1))),
+                "month_pct": health_month,
+            },
+            "monthly_overview": {
+                "monthly_salary": next(
+                    (
+                        i.normalized_monthly_amount
+                        for i in core["incomes"]
+                        if i.source == SALARY_SOURCE
+                    ),
+                    ZERO,
+                ),
+                "other_monthly_income": next(
+                    (
+                        i.normalized_monthly_amount
+                        for i in core["incomes"]
+                        if i.source == OTHER_INCOME_SOURCE
+                    ),
+                    ZERO,
+                ),
+                "total_monthly_income": monthly_income,
+                "monthly_expenses": monthly_expense,
+                "monthly_savings": monthly_savings,
+                "savings_rate": savings_rate * 100,
+                "net_monthly_cash_flow": monthly_savings,
+            },
+            "financial_summary": {
+                "current_balance": core["current_balance"],
+                "monthly_savings": monthly_savings,
+                "monthly_expenses": monthly_expense,
+                "investment_value": core["investment_value"],
+                "debt": total_debt,
+                "emergency_fund_months": round(emergency_months, 1),
+                "emergency_fund_status": self._emergency_status(emergency_months, liquid),
+                "net_worth_trend": month_flow,
+                "net_worth_trend_pct": _pct_change(net_worth, net_worth_at_month_start),
+            },
+            "has_data": bool(core["incomes"]),
         }
+
+    @staticmethod
+    def _emergency_status(months: float, liquid: Decimal) -> str:
+        if liquid <= 0:
+            return "Not Started"
+        if months >= 6:
+            return "Fully Funded"
+        if months >= 3:
+            return "Adequate"
+        return "Building"
+
+    async def _health_deltas(self, user_id: uuid.UUID, score: float) -> tuple[float, float]:
+        """Score movement measured against previously recorded daily snapshots.
+
+        Read-only by design. Snapshots are appended by ``save_financial_data``;
+        writing them from this read path would make every dashboard load mutate
+        the profile and take a write lock, which serialises concurrent reads.
+        """
+        profile = await self.get_profile(user_id)
+        history: dict[str, float] = dict(
+            (profile.financial_preferences or {}).get("health_history") or {}
+        )
+        if not history:
+            return 0.0, 0.0
+
+        today = utc_now().date().isoformat()
+        month_start = utc_now().date().replace(day=1).isoformat()
+
+        prior_days = sorted(d for d in history if d < today)
+        month_days = sorted(d for d in history if d <= month_start)
+
+        today_delta = score - history[prior_days[-1]] if prior_days else 0.0
+        month_delta = score - history[month_days[-1]] if month_days else 0.0
+        return today_delta, month_delta
+
+    async def _record_health_snapshot(self, user_id: uuid.UUID) -> None:
+        """Append today's score to the profile's history, one entry per day.
+
+        Called from the write path so the health card can show a real
+        day-over-day movement without any read turning into a write.
+        """
+        health = await self.get_health_score(user_id)
+        profile = await self.get_profile(user_id)
+        prefs = dict(profile.financial_preferences or {})
+        history: dict[str, float] = dict(prefs.get("health_history") or {})
+
+        history[utc_now().date().isoformat()] = round(health["score"], 2)
+        # Keep about a quarter's worth: enough for the trend, small enough to store.
+        for stale in sorted(history)[:-90]:
+            history.pop(stale, None)
+
+        prefs["health_history"] = history
+        await self.profiles.update(profile, financial_preferences=prefs)
 
     # --- Analytics & Cash Flow ---
     async def get_analytics(self, user_id: uuid.UUID) -> dict[str, Any]:
@@ -992,243 +1546,404 @@ class FinancialService:
         }
 
     # --- Financial Health Score Engine ---
+    # Six weighted metrics, every one of them read from stored user data. A
+    # metric with no data behind it is reported as unmeasured and its weight is
+    # redistributed rather than scored as zero.
+    def _score_savings_rate(self, income: Decimal, expense: Decimal) -> dict[str, Any]:
+        rate = float((income - expense) / income) if income > 0 else 0.0
+        score = _band(rate, [(-0.5, 0.0), (0.0, 30.0), (0.10, 60.0), (0.20, 85.0), (0.30, 100.0)])
+        if rate >= 0.30:
+            note = "Outstanding — you keep nearly a third of what you earn."
+        elif rate >= 0.20:
+            note = "Strong savings rate, comfortably above the 20% benchmark."
+        elif rate >= 0.10:
+            note = "Reasonable, but short of the 20% benchmark."
+        elif rate >= 0:
+            note = "Thin margin — most of your income is being spent."
+        else:
+            note = "You are spending more than you earn."
+        return {
+            "score": score,
+            "raw_value": f"{rate * 100:.1f}%",
+            "target": ">= 20%",
+            "explanation": note,
+            "_rate": rate,
+        }
+
+    def _score_dti(self, income: Decimal, emi: Decimal, liabilities: Decimal) -> dict[str, Any]:
+        # Revolving balances carry no EMI, so charge the conventional 5% minimum.
+        monthly_debt = emi + (liabilities * Decimal("0.05"))
+        dti = float(monthly_debt / income) if income > 0 else 0.0
+        score = _band(-dti, [(-1.0, 0.0), (-0.50, 40.0), (-0.36, 75.0), (-0.20, 100.0)])
+        if dti == 0:
+            note = "You carry no monthly debt service."
+        elif dti <= 0.20:
+            note = "Debt service is very comfortable."
+        elif dti <= 0.36:
+            note = "Debt service is within the 36% guideline."
+        elif dti <= 0.50:
+            note = "Debt service is above guideline and worth reducing."
+        else:
+            note = "Debt service is consuming an unsafe share of income."
+        return {
+            "score": score,
+            "raw_value": f"{dti * 100:.1f}%",
+            "target": "<= 36%",
+            "explanation": note,
+            "_dti": dti,
+            "_monthly_debt": monthly_debt,
+        }
+
+    def _score_emergency_fund(self, liquid: Decimal, expense: Decimal) -> dict[str, Any]:
+        if expense <= 0:
+            months = 6.0 if liquid > 0 else 0.0
+        else:
+            months = float(liquid / expense)
+        score = _band(months, [(0.0, 0.0), (1.0, 35.0), (3.0, 70.0), (6.0, 100.0)])
+        if months >= 6:
+            note = "Fully funded — six months or more of expenses covered."
+        elif months >= 3:
+            note = "Adequate buffer; six months is the goal."
+        elif months > 0:
+            note = "Buffer is thin for an unexpected loss of income."
+        else:
+            note = "No emergency reserve set aside."
+        return {
+            "score": score,
+            "raw_value": f"{months:.1f} months",
+            "target": ">= 6 months",
+            "explanation": note,
+            "_months": months,
+        }
+
+    def _score_expense_stability(self, flows: dict[str, dict[str, Decimal]]) -> dict[str, Any]:
+        unmeasured = {
+            "score": 0.0,
+            "measurable": False,
+            "raw_value": "Not enough history",
+            "target": "<= 20% variance",
+            "explanation": "Needs at least two months of recorded spending to measure.",
+        }
+        spends = [float(v["expense"]) for v in flows.values() if v["expense"] > 0]
+        if len(spends) < 2:
+            return unmeasured
+        mean = statistics.fmean(spends)
+        if mean == 0:
+            return unmeasured
+        # Coefficient of variation: spread relative to the size of the spend, so a
+        # large steady budget is not penalised against a small erratic one.
+        cv = statistics.pstdev(spends) / mean
+        score = _band(-cv, [(-0.60, 0.0), (-0.35, 35.0), (-0.20, 70.0), (-0.08, 100.0)])
+        if cv <= 0.08:
+            note = "Spending is highly predictable month to month."
+        elif cv <= 0.20:
+            note = "Spending is fairly steady."
+        elif cv <= 0.35:
+            note = "Spending swings noticeably between months."
+        else:
+            note = "Spending is volatile, which makes planning difficult."
+        return {
+            "score": score,
+            "raw_value": f"±{cv * 100:.0f}% variance",
+            "target": "<= 20% variance",
+            "explanation": note,
+            "_cv": cv,
+        }
+
+    def _score_investment_ratio(self, investments: Decimal, assets: Decimal) -> dict[str, Any]:
+        ratio = float(investments / assets) if assets > 0 else 0.0
+        score = _band(ratio, [(0.0, 0.0), (0.15, 65.0), (0.30, 100.0)])
+        if ratio >= 0.30:
+            note = "A healthy share of your assets is invested for growth."
+        elif ratio >= 0.15:
+            note = "Some growth exposure, but below the recommended level."
+        elif investments > 0:
+            note = "Most of your assets sit idle in cash rather than growing."
+        else:
+            note = "No investments recorded — cash alone loses to inflation."
+        return {
+            "score": score,
+            "raw_value": f"{ratio * 100:.1f}% of assets",
+            "target": ">= 30% of assets",
+            "explanation": note,
+            "_ratio": ratio,
+        }
+
+    def _score_cash_flow_trend(self, flows: dict[str, dict[str, Decimal]]) -> dict[str, Any]:
+        months = list(flows.items())
+        if len(months) < 2:
+            return {
+                "score": 0.0,
+                "measurable": False,
+                "raw_value": "Not enough history",
+                "target": "Positive and rising",
+                "explanation": "Needs at least two months of transactions to measure.",
+            }
+        nets = [float(v["net"]) for _, v in months[-6:]]
+        positive_months = sum(1 for n in nets if n >= 0)
+
+        half = max(1, len(nets) // 2)
+        recent_avg = statistics.fmean(nets[-half:])
+        prior_avg = statistics.fmean(nets[:-half]) if len(nets) > half else nets[0]
+
+        # Consistency of positive months carries most of the weight; direction of
+        # travel supplies the rest.
+        score = (positive_months / len(nets)) * 70.0
+        if recent_avg >= prior_avg:
+            score += 30.0
+        elif prior_avg != 0:
+            decline = (prior_avg - recent_avg) / abs(prior_avg)
+            score += max(0.0, 30.0 * (1.0 - decline))
+        score = max(0.0, min(100.0, score))
+
+        direction = "Improving" if recent_avg >= prior_avg else "Declining"
+        return {
+            "score": score,
+            "raw_value": direction,
+            "target": "Positive and rising",
+            "explanation": (
+                f"{positive_months} of the last {len(nets)} months ended positive, "
+                f"and the trend is {direction.lower()}."
+            ),
+            "_recent_avg": recent_avg,
+            "_prior_avg": prior_avg,
+        }
+
+    def _build_insights(
+        self,
+        core: dict[str, Any],
+        metrics: dict[str, dict[str, Any]],
+        flows: dict[str, dict[str, Decimal]],
+    ) -> list[str]:
+        """Observations phrased from the user's own figures. No data, no insight."""
+        insights: list[str] = []
+        income = core["monthly_income"]
+        expense = core["monthly_expense"]
+
+        if income > 0:
+            rate = metrics["savings_rate"]["_rate"]
+            if rate >= 0:
+                insights.append(
+                    f"You save {rate * 100:.0f}% of your monthly income "
+                    f"({_rupees(income - expense)} of {_rupees(income)})."
+                )
+            else:
+                insights.append(
+                    f"You spend {_rupees(expense - income)} more than you earn each month."
+                )
+
+        months = list(flows.items())
+        if len(months) >= 2:
+            prev_exp = float(months[-2][1]["expense"])
+            curr_exp = float(months[-1][1]["expense"])
+            if prev_exp > 0:
+                change = (curr_exp - prev_exp) / prev_exp * 100
+                if abs(change) >= 1:
+                    verb = "increased" if change > 0 else "decreased"
+                    insights.append(
+                        f"Your expenses {verb} {abs(change):.0f}% compared to last month."
+                    )
+
+        if core["liquid_assets"] > 0 and expense > 0:
+            months_covered = metrics["emergency_fund"]["_months"]
+            insights.append(f"Emergency fund covers {months_covered:.1f} months of expenses.")
+        elif core["liquid_assets"] <= 0:
+            insights.append("No liquid savings recorded — an emergency fund is the first priority.")
+
+        if core["total_assets"] > 0:
+            inv_ratio = metrics["investment_ratio"]["_ratio"]
+            if inv_ratio < 0.30:
+                insights.append(
+                    f"Investment allocation is {inv_ratio * 100:.0f}% of assets, below the "
+                    "recommended 30% level."
+                )
+            else:
+                insights.append(
+                    f"Investments make up {inv_ratio * 100:.0f}% of your assets, at or above "
+                    "the recommended level."
+                )
+
+        # Largest spending category, straight from the ledger.
+        spend_by_cat: dict[str, Decimal] = {}
+        for tx in core["transactions"]:
+            if tx.type == "Expense":
+                spend_by_cat[tx.category] = spend_by_cat.get(tx.category, ZERO) + tx.amount
+        total_spend = sum(spend_by_cat.values(), ZERO)
+        if total_spend > 0:
+            top_cat, top_amt = max(spend_by_cat.items(), key=lambda kv: kv[1])
+            share = float(top_amt / total_spend) * 100
+            insights.append(f"{top_cat} expenses account for {share:.0f}% of total spending.")
+
+        if core["total_debt"] > 0:
+            dti = metrics["debt_to_income"]["_dti"]
+            insights.append(
+                f"Debt service takes {dti * 100:.0f}% of monthly income against "
+                f"{_rupees(core['total_debt'])} outstanding."
+            )
+        elif income > 0:
+            insights.append("You carry no outstanding debt.")
+
+        return insights
+
+    def _build_recommendations(
+        self, core: dict[str, Any], metrics: dict[str, dict[str, Any]]
+    ) -> list[str]:
+        """Concrete next actions, each sized in rupees from the user's figures."""
+        recs: list[str] = []
+        income = core["monthly_income"]
+        expense = core["monthly_expense"]
+
+        if metrics["savings_rate"]["_rate"] < 0.20 and income > 0:
+            gap = (income * Decimal("0.20")) - (income - expense)
+            if gap > 0:
+                recs.append(
+                    f"Trim {_rupees(gap)} a month from expenses to reach a 20% savings rate."
+                )
+
+        if metrics["emergency_fund"]["_months"] < 6 and expense > 0:
+            shortfall = (expense * 6) - core["liquid_assets"]
+            if shortfall > 0:
+                recs.append(
+                    f"Build your emergency fund by {_rupees(shortfall)} to cover six months "
+                    "of expenses."
+                )
+
+        if metrics["debt_to_income"]["_dti"] > 0.36 and income > 0:
+            excess = metrics["debt_to_income"]["_monthly_debt"] - (income * Decimal("0.36"))
+            recs.append(
+                f"Reduce monthly debt payments by about {_rupees(excess)} to bring your "
+                "debt-to-income ratio under 36%. Clear the highest-rate balance first."
+            )
+
+        if metrics["investment_ratio"]["_ratio"] < 0.30 and core["total_assets"] > 0:
+            target = (core["total_assets"] * Decimal("0.30")) - core["investment_value"]
+            if target > 0:
+                recs.append(
+                    f"Move {_rupees(target)} of idle cash into diversified investments to "
+                    "reach a 30% growth allocation."
+                )
+
+        stability = metrics["expense_stability"]
+        if stability.get("measurable", True) and stability["score"] < 60:
+            recs.append(
+                "Your month-to-month spending swings widely. Set category budgets to make "
+                "cash flow predictable."
+            )
+
+        trend = metrics["cash_flow_trend"]
+        if trend.get("measurable", True) and trend["score"] < 60:
+            recs.append(
+                "Recent months are trending toward negative cash flow. Review recurring "
+                "subscriptions and variable spending before it erodes savings."
+            )
+
+        if not recs:
+            recs.append(
+                "Your fundamentals are sound. Keep contributions automatic and revisit your "
+                "allocation each quarter."
+            )
+        return recs
+
     async def get_health_score(self, user_id: uuid.UUID) -> dict[str, Any]:
-        from app.core.filtering import FieldFilter, FilterOperator
+        core = await self._core_figures(user_id)
+        flows = self._monthly_flows(core["transactions"])
 
-        user_filter = [FieldFilter(field="user_id", operator=FilterOperator.EQ, value=str(user_id))]
+        income = core["monthly_income"]
+        expense = core["monthly_expense"]
 
-        incomes_list, _ = await self.incomes.list(filters=user_filter, limit=1000)
-        user_incomes = incomes_list
-        monthly_income = sum((i.normalized_monthly_amount for i in user_incomes), Decimal("0.00"))
-        if monthly_income == 0:
-            monthly_income = Decimal("1.00")
+        metrics = {
+            "savings_rate": self._score_savings_rate(income, expense),
+            "debt_to_income": self._score_dti(
+                income,
+                core["total_loan_emi"],
+                sum((liab.outstanding_balance for liab in core["liabilities"]), ZERO),
+            ),
+            "emergency_fund": self._score_emergency_fund(core["liquid_assets"], expense),
+            "expense_stability": self._score_expense_stability(flows),
+            "investment_ratio": self._score_investment_ratio(
+                core["investment_value"], core["total_assets"]
+            ),
+            "cash_flow_trend": self._score_cash_flow_trend(flows),
+        }
 
-        expenses_list, _ = await self.expenses.list(filters=user_filter, limit=1000)
-        user_expenses = expenses_list
-        monthly_expense = sum((e.normalized_monthly_amount for e in user_expenses), Decimal("0.00"))
+        if not core["incomes"] and not core["assets"]:
+            # Nothing entered yet: report that honestly instead of inventing a
+            # score from empty inputs.
+            return {
+                "score": 0.0,
+                "grade": "POOR",
+                "grade_label": GRADE_LABELS["POOR"],
+                "breakdown": {
+                    key: {
+                        "score": 0.0,
+                        "weight": METRIC_WEIGHTS[key],
+                        "raw_value": "No data",
+                        "target": metric["target"],
+                        "explanation": "Upload your financial data to calculate this metric.",
+                    }
+                    for key, metric in metrics.items()
+                },
+                "strengths": [],
+                "areas_to_improve": [],
+                "insights": [],
+                "recommendations": [
+                    "Upload your financial data to generate your health score and insights."
+                ],
+                "has_data": False,
+            }
 
-        loans_list, _ = await self.loans.list(filters=user_filter, limit=1000)
-        user_loans = [ln for ln in loans_list if ln.status == "ACTIVE"]
-        total_loan_emi = sum((ln.emi for ln in user_loans), Decimal("0.00"))
-
-        liabs_list, _ = await self.liabilities.list(filters=user_filter, limit=1000)
-        user_liabs = liabs_list
-        total_liab_bal = sum((liab.outstanding_balance for liab in user_liabs), Decimal("0.00"))
-
-        assets_list, _ = await self.assets.list(filters=user_filter, limit=1000)
-        user_assets = assets_list
-        liquid_assets = sum(
-            (a.current_value for a in user_assets if a.type in ("Cash", "Bank accounts")),
-            Decimal("0.00"),
+        # Renormalise across the metrics we can actually measure.
+        measurable = {k: m for k, m in metrics.items() if m.get("measurable", True)}
+        total_weight = sum(METRIC_WEIGHTS[k] for k in measurable)
+        weighted = (
+            sum(measurable[k]["score"] * METRIC_WEIGHTS[k] for k in measurable) / total_weight
+            if total_weight
+            else 0.0
         )
+        score = round(max(0.0, min(100.0, weighted)), 1)
 
-        insurances_list, _ = await self.insurances.list(filters=user_filter, limit=1000)
-        user_ins = [ins for ins in insurances_list if ins.status == "ACTIVE"]
-
-        tx_list, _ = await self.transactions.list(filters=user_filter, limit=1000)
-        thirty_days_ago = utc_now() - timedelta(days=30)
-        recent_investments = sum(
-            (
-                t.amount
-                for t in tx_list
-                if t.type == "Investment" and t.transaction_date >= thirty_days_ago
-            ),
-            Decimal("0.00"),
-        )
-
-        breakdown = {}
-        recommendations = []
-
-        # Metric A: Savings Rate (Weight: 25%)
-        savings_rate = (monthly_income - monthly_expense) / monthly_income
-        if savings_rate >= Decimal("0.20"):
-            rate_score = 100
-        elif savings_rate >= Decimal("0.10"):
-            rate_score = 70
-        elif savings_rate >= Decimal("0.00"):
-            rate_score = 40
-        else:
-            rate_score = 0
-
-        breakdown["savings_rate"] = {
-            "score": float(rate_score),
-            "raw_value": f"{float(savings_rate) * 100:.1f}%",
-            "target": ">= 20.0%",
-            "explanation": (
-                "Excellent savings rate."
-                if rate_score == 100
-                else (
-                    "Healthy savings rate."
-                    if rate_score == 70
-                    else (
-                        "Low savings rate, try to reduce variable expenses."
-                        if rate_score == 40
-                        else "Negative savings rate! You are spending more than you earn."
-                    )
-                )
-            ),
-        }
-        if rate_score < 70:
-            recommendations.append(
-                "Your savings rate is below the recommended 10-20% threshold. "
-                "Try to analyze and cut down on variable expenses."
-            )
-
-        # Metric B: Debt-to-Income (DTI) Ratio (Weight: 25%)
-        monthly_debt_pay = total_loan_emi + (total_liab_bal * Decimal("0.05"))
-        dti = monthly_debt_pay / monthly_income
-        if dti == 0 or dti <= Decimal("0.36"):
-            dti_score = 100
-        elif dti <= Decimal("0.50"):
-            dti_score = 60
-        else:
-            dti_score = 20
-
-        breakdown["debt_to_income"] = {
-            "score": float(dti_score),
-            "raw_value": f"{float(dti) * 100:.1f}%",
-            "target": "<= 36.0%",
-            "explanation": (
-                "Excellent! Very low or no monthly debt service."
-                if dti_score == 100
-                else (
-                    "Moderate debt levels, manage outstanding balances carefully."
-                    if dti_score == 60
-                    else "High debt service ratio! Focus on paydown strategies."
-                )
-            ),
-        }
-        if dti_score < 100:
-            recommendations.append(
-                "Your debt-to-income ratio is high. "
-                "Focus on paying down high-interest liabilities first (e.g. Credit Cards, BNPL)."
-            )
-
-        # Metric C: Emergency Fund Coverage (Weight: 20%)
-        month_exp_divisor = monthly_expense if monthly_expense > 0 else Decimal("1000.00")
-        emergency_months = liquid_assets / month_exp_divisor
-        if emergency_months >= 6:
-            em_score = 100
-        elif emergency_months >= 3:
-            em_score = 85
-        elif emergency_months >= 1:
-            em_score = 50
-        else:
-            em_score = 10
-
-        breakdown["emergency_fund"] = {
-            "score": float(em_score),
-            "raw_value": f"{float(emergency_months):.1f} months",
-            "target": ">= 6.0 months",
-            "explanation": (
-                "Excellent emergency fund reserves."
-                if em_score == 100
-                else (
-                    "Good coverage of essential expenses."
-                    if em_score == 85
-                    else (
-                        "Low emergency buffer. Recommended is 3-6 months."
-                        if em_score == 50
-                        else "Dangerously low emergency reserves!"
-                    )
-                )
-            ),
-        }
-        if em_score < 85:
-            recommendations.append(
-                "Your emergency fund covers less than 3 months of expenses. "
-                "Set aside a portion of your income into high-yield bank accounts."
-            )
-
-        # Metric D: Investment Ratio (Weight: 15%)
-        inv_ratio = recent_investments / monthly_income
-        if inv_ratio >= Decimal("0.15"):
-            inv_score = 100
-        elif inv_ratio >= Decimal("0.05"):
-            inv_score = 60
-        else:
-            inv_score = 20
-
-        breakdown["investment_ratio"] = {
-            "score": float(inv_score),
-            "raw_value": f"{float(inv_ratio) * 100:.1f}%",
-            "target": ">= 15.0%",
-            "explanation": (
-                "Excellent rate of investment."
-                if inv_score == 100
-                else (
-                    "Moderate investing rate."
-                    if inv_score == 60
-                    else "Very low investment rate, consider automated investing plans."
-                )
-            ),
-        }
-        if inv_score < 60:
-            recommendations.append(
-                "You are investing less than 15% of your income. "
-                "Consider setting up automatic monthly contributions to mutual funds or ETFs."
-            )
-
-        # Metric E: Insurance Coverage (Weight: 15%)
-        has_health = any(ins.type.upper() == "HEALTH" for ins in user_ins)
-        has_life = any(ins.type.upper() == "LIFE" for ins in user_ins)
-
-        if has_health and has_life:
-            ins_score = 100
-        elif has_health or has_life:
-            ins_score = 50
-        else:
-            ins_score = 0
-
-        breakdown["insurance_coverage"] = {
-            "score": float(ins_score),
-            "raw_value": (
-                "Health & Life"
-                if (has_health and has_life)
-                else "Health Only" if has_health else "Life Only" if has_life else "None"
-            ),
-            "target": "Health & Life Active",
-            "explanation": (
-                "Well covered."
-                if ins_score == 100
-                else (
-                    "Partial insurance coverage, missing life or health policies."
-                    if ins_score == 50
-                    else "No active insurance policies detected!"
-                )
-            ),
-        }
-        if ins_score < 100:
-            recommendations.append(
-                "Ensure you have active Health and Life insurance policies to protect "
-                "yourself and your dependents from unexpected events."
-            )
-
-        weighted_score = (
-            (rate_score * 0.25)
-            + (dti_score * 0.25)
-            + (em_score * 0.20)
-            + (inv_score * 0.15)
-            + (ins_score * 0.15)
-        )
-
-        grade = "POOR"
-        if weighted_score >= 85:
+        if score >= 90:
             grade = "EXCELLENT"
-        elif weighted_score >= 70:
+        elif score >= 75:
+            grade = "VERY_GOOD"
+        elif score >= 60:
             grade = "GOOD"
-        elif weighted_score >= 50:
-            grade = "FAIR"
+        elif score >= 40:
+            grade = "NEEDS_IMPROVEMENT"
+        else:
+            grade = "POOR"
 
-        if weighted_score >= 85:
-            recommendations.append(
-                "Keep up the excellent work! Continue optimizing your portfolio "
-                "and monitoring your expenses."
-            )
+        strengths = [
+            f"{METRIC_LABELS[k]}: {m['raw_value']} — {m['explanation']}"
+            for k, m in measurable.items()
+            if m["score"] >= 75
+        ]
+        areas = [
+            f"{METRIC_LABELS[k]}: {m['raw_value']} — {m['explanation']}"
+            for k, m in measurable.items()
+            if m["score"] < 60
+        ]
+
+        breakdown = {
+            key: {
+                "score": round(metric["score"], 1),
+                # A metric we cannot measure carries no weight, and says so.
+                "weight": METRIC_WEIGHTS[key] if metric.get("measurable", True) else 0.0,
+                "raw_value": metric["raw_value"],
+                "target": metric["target"],
+                "explanation": metric["explanation"],
+            }
+            for key, metric in metrics.items()
+        }
 
         return {
-            "score": float(weighted_score),
+            "score": score,
             "grade": grade,
+            "grade_label": GRADE_LABELS[grade],
             "breakdown": breakdown,
-            "recommendations": recommendations,
+            "strengths": strengths,
+            "areas_to_improve": areas,
+            "insights": self._build_insights(core, metrics, flows),
+            "recommendations": self._build_recommendations(core, metrics),
+            "has_data": True,
         }

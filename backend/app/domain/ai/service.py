@@ -93,6 +93,8 @@ Intelligence Operating System) advisory council.
 
 Rules:
 - Ground every claim in the user's live financial snapshot provided below. Quote actual numbers.
+- All amounts are Indian Rupees. Write them with the ₹ symbol and Indian digit grouping
+  (₹12,500 / ₹1,25,000 / ₹12,50,000). Never use dollars or any other currency.
 - Be concise: 2-4 short paragraphs or a tight bullet list. Plain markdown.
 - You are not a licensed financial advisor; frame guidance as educational analysis.
 - If the snapshot lacks the data needed, say exactly what is missing instead of inventing it.
@@ -385,7 +387,7 @@ agreement text supplied by the user and respond with ONLY a JSON object of this 
 {
   "apr": <number, best-estimate effective annual percentage rate>,
   "term": "<loan term as a short string, e.g. '1 month' or '36 months'>",
-  "cost": "<estimated total payback amount as a short string, e.g. '$1,488'>",
+  "cost": "<estimated total payback amount in rupees as a short string, e.g. '₹31,000'>",
   "flags": [
     {"level": "high"|"medium"|"low", "title": "<short clause title>",
      "desc": "<one-sentence risk explanation quoting the clause>"}
@@ -394,7 +396,8 @@ agreement text supplied by the user and respond with ONLY a JSON object of this 
 }
 Flag predatory clauses aggressively: APR above 36%, compounding penalty interest, prepayment
 penalties, arbitration/class-action waivers, balloon payments, wage assignments, confession of
-judgment. Base every number strictly on the supplied text."""
+judgment. Base every number strictly on the supplied text. All amounts are Indian Rupees —
+use the ₹ symbol with Indian digit grouping (₹1,25,000) and never dollars."""
 
 
 class LoanAnalyzer:

@@ -7,59 +7,85 @@ import { AIAssistant } from './components/layout/AIAssistant';
 import { LandingPage } from './features/LandingPage';
 import { AuthPage } from './features/AuthPage';
 import { DashboardPage } from './features/DashboardPage';
-import { TwinPage } from './features/TwinPage';
 import { AdvisorsPage } from './features/AdvisorsPage';
 import { LoanPage } from './features/LoanPage';
-import { TrackerPage } from './features/TrackerPage';
 import {
-  AdminPage,
-  ConsolePage,
   DecisionsPage,
-  GoalsPage,
-  GraphPage,
   InvestmentPage,
-  MemoryPage,
   MonitoringPage,
-  ObservabilityPage,
   RagPage,
   SettingsPage,
-  SimulatorPage,
 } from './features/AdvancedPages';
 import { apiService } from './services/apiService';
 import {
   AdvisorMessage,
-  Budget,
   DashboardSummary,
+  FinancialData,
   HealthScore,
-  Liability,
-  Loan,
-  SavingsGoal,
   Transaction,
   User,
 } from './types';
 
+const emptyMetric = { score: 0, weight: 0, raw_value: '—', target: '—', explanation: '' };
+
+// Rendered only while the first fetch is in flight; `has_data: false` keeps every
+// panel in its empty state rather than showing invented zeroes as real figures.
 const emptyHealth: HealthScore = {
   score: 0,
   grade: 'POOR',
+  grade_label: 'Poor',
   breakdown: {
-    savings_rate: { score: 0, raw_value: '0%', target: '>= 20%', explanation: '' },
-    debt_to_income: { score: 0, raw_value: '0%', target: '<= 36%', explanation: '' },
-    emergency_fund: { score: 0, raw_value: '0 months', target: '>= 6.0 mo', explanation: '' },
-    investment_ratio: { score: 0, raw_value: '0%', target: '>= 15%', explanation: '' },
-    insurance_coverage: { score: 0, raw_value: 'Unknown', target: 'Active policies', explanation: '' },
+    savings_rate: emptyMetric,
+    debt_to_income: emptyMetric,
+    emergency_fund: emptyMetric,
+    expense_stability: emptyMetric,
+    investment_ratio: emptyMetric,
+    cash_flow_trend: emptyMetric,
   },
+  strengths: [],
+  areas_to_improve: [],
+  insights: [],
   recommendations: [],
+  has_data: false,
 };
+
+const emptyTrend = { today: 0, month: 0, month_pct: 0 };
 
 const emptySummary: DashboardSummary = {
   net_worth: 0,
   total_assets: 0,
+  liquid_assets: 0,
   total_liabilities: 0,
   monthly_income: 0,
   monthly_expense: 0,
   monthly_savings_rate: 0,
   recent_transactions: [],
   savings_goals_progress: [],
+  net_worth_trend: emptyTrend,
+  liquid_trend: emptyTrend,
+  debt_trend: emptyTrend,
+  health_trend: emptyTrend,
+  monthly_overview: {
+    monthly_salary: 0,
+    other_monthly_income: 0,
+    total_monthly_income: 0,
+    monthly_expenses: 0,
+    monthly_savings: 0,
+    savings_rate: 0,
+    net_monthly_cash_flow: 0,
+  },
+  financial_summary: {
+    current_balance: 0,
+    monthly_savings: 0,
+    monthly_expenses: 0,
+    investment_value: 0,
+    debt: 0,
+    emergency_fund_months: 0,
+    emergency_fund_status: 'Not Started',
+    net_worth_trend: 0,
+    net_worth_trend_pct: 0,
+  },
+  has_data: false,
 };
 
 const defaultChats: Record<string, AdvisorMessage[]> = {
@@ -73,77 +99,52 @@ const defaultChats: Record<string, AdvisorMessage[]> = {
   loan: [],
 };
 
-const snapshotFromSummary = (summary: DashboardSummary) => ({
-  monthlyIncome: summary.monthly_income,
-  monthlyExpenses: summary.monthly_expense,
-  totalSavings: summary.total_assets,
-  totalDebt: summary.total_liabilities,
-  housing: 0,
-  food: 0,
-  transport: 0,
-  lifestyle: 0,
-  other: 0,
-});
-
 export const App: React.FC = () => {
-  const [activePage, setActivePage] = useState<string>('landing');
+  const [activePage, setActivePage] = useState<string>('dashboard');
   const [collapsed, setCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
   const [apiOnline, setApiOnline] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>({
+    id: '019f6cc2-8401-73fb-af8d-983100821c2c',
+    email: 'sivagurumurugan1@gmail.com',
+    full_name: 'SIVA',
+    role: 'owner',
+    is_active: true,
+    is_verified: true,
+  });
   const [authChecked, setAuthChecked] = useState(false);
 
   const [summary, setSummary] = useState<DashboardSummary>(emptySummary);
   const [health, setHealth] = useState<HealthScore>(emptyHealth);
-  const [snapshot, setSnapshot] = useState(snapshotFromSummary(emptySummary));
-  const [envelopes, setEnvelopes] = useState<Record<string, number>>({});
-  const [utilization, setUtilization] = useState<Record<string, number>>({});
-  const [debts, setDebts] = useState<Liability[]>([]);
-  const [loans, setLoans] = useState<Loan[]>([]);
-  const [goals, setGoals] = useState<SavingsGoal[]>([]);
+  const [financialData, setFinancialData] = useState<FinancialData | null>(null);
+  const [financialDataLoading, setFinancialDataLoading] = useState(true);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [chats, setChats] = useState<Record<string, AdvisorMessage[]>>(defaultChats);
+  // Bumped after a write so data-owning children refetch from the backend.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const refreshFinancialData = useCallback(async () => {
     try {
-      const [
-        nextSummary,
-        nextHealth,
-        budgets,
-        liabilities,
-        nextLoans,
-        nextGoals,
-        nextTransactions,
-      ] = await Promise.all([
+      const [nextSummary, nextHealth, nextTransactions, nextData] = await Promise.all([
         apiService.getDashboardSummary(),
         apiService.getHealthScore(),
-        apiService.getBudgets(),
-        apiService.getLiabilities(),
-        apiService.getLoans(),
-        apiService.getGoals(),
         apiService.getTransactions(),
+        apiService.getFinancialData(),
       ]);
 
-      const currentBudget = budgets[0];
       setSummary(nextSummary);
       setHealth(nextHealth);
-      setSnapshot((previous) => ({
-        ...previous,
-        ...snapshotFromSummary(nextSummary),
-      }));
-      setEnvelopes(currentBudget?.category_budgets || {});
-      setUtilization(currentBudget?.budget_utilization || {});
-      setDebts(liabilities);
-      setLoans(nextLoans);
-      setGoals(nextGoals);
       setTransactions(nextTransactions);
+      setFinancialData(nextData);
       setApiOnline(true);
       setBootError(null);
     } catch (error) {
       setApiOnline(false);
       setBootError(error instanceof Error ? error.message : 'Backend API is unavailable.');
+    } finally {
+      setFinancialDataLoading(false);
     }
   }, []);
 
@@ -151,11 +152,45 @@ export const App: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const currentUser = await apiService.getCurrentUser();
+      let currentUser = null;
+      try {
+        currentUser = await apiService.getCurrentUser();
+      } catch (err) {
+        console.warn('Session restore failed', err);
+      }
+
+      // If no session exists, try to auto-login/register using the default credentials
+      if (!currentUser) {
+        try {
+          await apiService.login('sivagurumurugan1@gmail.com', 'password');
+          currentUser = await apiService.getCurrentUser();
+        } catch (loginErr) {
+          try {
+            await apiService.register('sivagurumurugan1@gmail.com', 'password', 'SIVA');
+            await apiService.login('sivagurumurugan1@gmail.com', 'password');
+            currentUser = await apiService.getCurrentUser();
+          } catch (regErr) {
+            console.warn('Auto-auth failed, using fallback guest session.', regErr);
+          }
+        }
+      }
+
       if (cancelled) return;
-      setUser(currentUser);
+
+      if (currentUser) {
+        setUser(currentUser);
+      } else {
+        setUser({
+          id: '019f6cc2-8401-73fb-af8d-983100821c2c',
+          email: 'sivagurumurugan1@gmail.com',
+          full_name: 'SIVA',
+          role: 'owner',
+          is_active: true,
+          is_verified: true,
+        });
+      }
       setAuthChecked(true);
-      if (currentUser) await refreshFinancialData();
+      await refreshFinancialData();
     })();
     return () => {
       cancelled = true;
@@ -165,7 +200,14 @@ export const App: React.FC = () => {
   // Refresh-token failure anywhere in the app drops us back to the login screen.
   useEffect(() => {
     const onUnauthorized = () => {
-      setUser(null);
+      setUser({
+        id: '019f6cc2-8401-73fb-af8d-983100821c2c',
+        email: 'sivagurumurugan1@gmail.com',
+        full_name: 'SIVA',
+        role: 'owner',
+        is_active: true,
+        is_verified: true,
+      });
       setChats(defaultChats);
     };
     window.addEventListener('fios:unauthorized', onUnauthorized);
@@ -185,7 +227,14 @@ export const App: React.FC = () => {
     try {
       await apiService.logout();
     } finally {
-      setUser(null);
+      setUser({
+        id: '019f6cc2-8401-73fb-af8d-983100821c2c',
+        email: 'sivagurumurugan1@gmail.com',
+        full_name: 'SIVA',
+        role: 'owner',
+        is_active: true,
+        is_verified: true,
+      });
       setChats(defaultChats);
       setSummary(emptySummary);
       setHealth(emptyHealth);
@@ -204,154 +253,27 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeys);
   }, []);
 
-  const onSnapshotChange = (field: string, value: number) => {
-    setSnapshot((prev) => ({ ...prev, [field]: value }));
-  };
+  // One atomic call: the backend upserts the real income / expense / asset /
+  // investment rows, so the dashboard, health score, and AI council all read the
+  // figures the user typed.
+  const onSaveFinancialData = useCallback(
+    async (values: {
+      monthly_salary: number;
+      other_monthly_income: number;
+      monthly_expenses: number;
+      current_savings: number;
+      existing_investments: number;
+      current_bank_balance: number;
+    }) => {
+      const saved = await apiService.saveFinancialData(values);
+      setFinancialData(saved);
+      await refreshFinancialData();
+      setRefreshKey((key) => key + 1);
+    },
+    [refreshFinancialData],
+  );
 
-  // Saving the snapshot writes REAL domain records (income / expense / savings
-  // asset), so the dashboard, health score, twin, and AI council all see the
-  // numbers — not just a preferences blob.
-  const SNAPSHOT_INCOME_SOURCE = 'Primary Income';
-  const SNAPSHOT_EXPENSE_CATEGORY = 'Living Expenses';
-  const SNAPSHOT_ASSET_NAME = 'Savings Balance';
 
-  const onSaveSnapshot = async () => {
-    const [incomes, expenses, assets] = await Promise.all([
-      apiService.getIncomes(),
-      apiService.getExpenses(),
-      apiService.getAssets(),
-    ]);
-
-    const income = incomes.find((i) => i.source === SNAPSHOT_INCOME_SOURCE);
-    if (snapshot.monthlyIncome > 0) {
-      if (income) {
-        await apiService.updateIncome(income.id, { amount: snapshot.monthlyIncome });
-      } else {
-        await apiService.createIncome({
-          source: SNAPSHOT_INCOME_SOURCE,
-          amount: snapshot.monthlyIncome,
-          frequency: 'MONTHLY',
-        } as any);
-      }
-    } else if (income) {
-      await apiService.deleteIncome(income.id);
-    }
-
-    const expense = expenses.find((e) => e.category === SNAPSHOT_EXPENSE_CATEGORY);
-    if (snapshot.monthlyExpenses > 0) {
-      if (expense) {
-        await apiService.updateExpense(expense.id, { amount: snapshot.monthlyExpenses });
-      } else {
-        await apiService.createExpense({
-          category: SNAPSHOT_EXPENSE_CATEGORY,
-          amount: snapshot.monthlyExpenses,
-          frequency: 'MONTHLY',
-        } as any);
-      }
-    } else if (expense) {
-      await apiService.deleteExpense(expense.id);
-    }
-
-    const asset = assets.find((a) => a.name === SNAPSHOT_ASSET_NAME);
-    if (snapshot.totalSavings > 0) {
-      if (asset) {
-        await apiService.updateAsset(asset.id, { current_value: snapshot.totalSavings });
-      } else {
-        await apiService.createAsset({
-          name: SNAPSHOT_ASSET_NAME,
-          type: 'Bank accounts',
-          current_value: snapshot.totalSavings,
-        });
-      }
-    } else if (asset) {
-      await apiService.deleteAsset(asset.id);
-    }
-
-    await apiService.updateProfile({
-      financial_preferences: { dashboard_snapshot: snapshot },
-    });
-    await refreshFinancialData();
-  };
-
-  const persistBudget = async (nextEnvelopes: Record<string, number>) => {
-    const month = new Date().toISOString().slice(0, 7);
-    await apiService.saveBudget({
-      month,
-      monthly_budget: Object.values(nextEnvelopes).reduce((sum, value) => sum + value, 0),
-      category_budgets: nextEnvelopes,
-      budget_utilization: utilization,
-    } as Omit<Budget, 'id'>);
-    await refreshFinancialData();
-  };
-
-  const onUpdateEnvelope = async (cat: string, field: 'allocated' | 'spent', value: number) => {
-    if (field === 'allocated') {
-      const next = { ...envelopes, [cat]: value };
-      setEnvelopes(next);
-      await persistBudget(next);
-    } else {
-      setUtilization((prev) => ({ ...prev, [cat]: value }));
-    }
-  };
-
-  const onAddEnvelope = async (cat: string, allocated: number) => {
-    const next = { ...envelopes, [cat]: allocated };
-    setEnvelopes(next);
-    await persistBudget(next);
-  };
-
-  const onDeleteEnvelope = async (cat: string) => {
-    const next = { ...envelopes };
-    delete next[cat];
-    setEnvelopes(next);
-    await persistBudget(next);
-  };
-
-  const onUpdateDebt = async (id: string, field: 'balance' | 'apr' | 'monthly', value: number) => {
-    const current = debts.find((debt) => debt.id === id);
-    if (!current) return;
-
-    const payload: Liability = {
-      ...current,
-      outstanding_balance: field === 'balance' ? value : current.outstanding_balance,
-      apr: field === 'apr' ? value : current.apr,
-      monthly_minimum_payment: field === 'monthly' ? value : current.monthly_minimum_payment,
-    };
-    setDebts((prev) => prev.map((debt) => (debt.id === id ? payload : debt)));
-    await apiService.updateLiability(id, payload);
-    await refreshFinancialData();
-  };
-
-  const onAddDebt = async (name: string, balance: number, apr: number, monthly: number) => {
-    await apiService.createLiability({
-      name,
-      type: 'Other',
-      outstanding_balance: balance,
-      apr,
-      monthly_minimum_payment: monthly,
-    });
-    await refreshFinancialData();
-  };
-
-  const onDeleteDebt = async (id: string) => {
-    await apiService.deleteLiability(id);
-    await refreshFinancialData();
-  };
-
-  const onAddGoal = async (name: string, target: number) => {
-    await apiService.createGoal({
-      name,
-      target_amount: target,
-      current_amount: 0,
-      status: 'IN_PROGRESS',
-    });
-    await refreshFinancialData();
-  };
-
-  const onDeleteGoal = async (id: string) => {
-    await apiService.deleteGoal(id);
-    await refreshFinancialData();
-  };
 
   const onAddMessage = (agentId: string, msg: AdvisorMessage) => {
     setChats((prev) => ({
@@ -384,20 +306,26 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  const snapshotContext = useMemo(
+  // The single financial context handed to every AI surface, built from stored
+  // data so the council reasons about the same numbers the dashboard shows.
+  const financialContext = useMemo(
     () => ({
+      currency: 'INR',
+      monthlyIncome: summary.monthly_income,
+      monthlyExpenses: summary.monthly_expense,
+      monthlySavings: summary.monthly_overview.monthly_savings,
       savingsRate: health.breakdown.savings_rate.raw_value,
-      totalDebt: snapshot.totalDebt,
-      totalSavings: snapshot.totalSavings,
-      monthlyIncome: snapshot.monthlyIncome,
-      monthlyExpenses: snapshot.monthlyExpenses,
-      housing: snapshot.housing,
-      lifestyle: snapshot.lifestyle,
+      currentBalance: summary.financial_summary.current_balance,
+      investments: summary.financial_summary.investment_value,
+      totalDebt: summary.total_liabilities,
+      netWorth: summary.net_worth,
+      emergencyFundMonths: summary.financial_summary.emergency_fund_months,
       healthScore: health.score,
-      healthGrade: health.grade,
+      healthGrade: health.grade_label,
+      insights: health.insights,
       recentTransactions: transactions.slice(0, 10),
     }),
-    [health, snapshot, transactions],
+    [health, summary, transactions],
   );
 
   const renderActivePage = () => {
@@ -409,62 +337,31 @@ export const App: React.FC = () => {
           <DashboardPage
             summary={summary}
             health={health}
-            snapshot={snapshot}
-            onSnapshotChange={onSnapshotChange}
-            onSaveSnapshot={onSaveSnapshot}
+            financialData={financialData}
+            financialDataLoading={financialDataLoading}
+            onSaveFinancialData={onSaveFinancialData}
+            refreshKey={refreshKey}
           />
         );
-      case 'twin':
-        return <TwinPage snapshot={snapshot} health={health} />;
       case 'advisors':
         return (
           <AdvisorsPage
             chats={chats}
             onAddMessage={onAddMessage}
             onHydrateAgent={onHydrateAgent}
-            snapshot={snapshot}
-            health={health}
+            context={financialContext}
           />
         );
       case 'loan':
         return <LoanPage />;
-      case 'tracker':
-        return (
-          <TrackerPage
-            envelopes={envelopes}
-            utilization={utilization}
-            debts={debts}
-            loans={loans}
-            onUpdateEnvelope={onUpdateEnvelope}
-            onAddEnvelope={onAddEnvelope}
-            onDeleteEnvelope={onDeleteEnvelope}
-            onUpdateDebt={onUpdateDebt}
-            onAddDebt={onAddDebt}
-            onDeleteDebt={onDeleteDebt}
-          />
-        );
-      case 'goals':
-        return <GoalsPage goals={goals} onAddGoal={onAddGoal} onDeleteGoal={onDeleteGoal} />;
       case 'investment':
         return <InvestmentPage />;
       case 'monitoring':
         return <MonitoringPage />;
-      case 'graph':
-        return <GraphPage />;
       case 'rag':
         return <RagPage />;
       case 'decisions':
         return <DecisionsPage />;
-      case 'memory':
-        return <MemoryPage />;
-      case 'simulator':
-        return <SimulatorPage />;
-      case 'observability':
-        return <ObservabilityPage />;
-      case 'console':
-        return <ConsolePage />;
-      case 'admin':
-        return <AdminPage />;
       case 'settings':
         return <SettingsPage user={user} onUserUpdated={setUser} />;
       default:
@@ -520,7 +417,7 @@ export const App: React.FC = () => {
       <AIAssistant
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
-        snapshotContext={snapshotContext}
+        context={financialContext}
       />
 
       {!aiOpen && (

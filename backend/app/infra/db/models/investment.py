@@ -32,7 +32,7 @@ class Investment(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, AuditMixi
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(15, 6), nullable=True)
     purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     ticker: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
     last_updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=datetime.utcnow
     )

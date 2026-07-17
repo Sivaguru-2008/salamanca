@@ -4,6 +4,9 @@ Files land on local disk under ``settings.upload_dir``; extracted text is
 chunked and persisted in the document row's ``metadata_json`` so retrieval
 needs no extra vector store. Chunk search scores are cosine similarity over
 term-frequency vectors — computed, never fabricated.
+
+Ingestion is gated on the document being financial (see ``classifier``):
+non-financial uploads are rejected before any chunking or embedding work.
 """
 
 from __future__ import annotations
@@ -26,6 +29,11 @@ from app.core.errors import (
     NotFoundError,
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
+)
+from app.domain.documents.classifier import (
+    DOMAIN_FINANCE,
+    UNSUPPORTED_MESSAGE,
+    DocumentClassifier,
 )
 from app.domain.financial.service import FinancialService
 from app.infra.db.models.financial_document import FinancialDocument
@@ -111,6 +119,7 @@ class DocumentsService:
         self.db = db
         self.settings = settings
         self.financial = FinancialService(db)
+        self.classifier = DocumentClassifier(settings)
 
     def _user_dir(self, user_id: uuid.UUID) -> Path:
         base = Path(self.settings.upload_dir) / str(user_id)
@@ -156,6 +165,20 @@ class DocumentsService:
         target.write_bytes(content)
 
         text = self._extract_text(target, extension)
+
+        # Gate on the financial domain before spending any chunking or
+        # embedding work on the document.
+        classification = await self.classifier.classify(text)
+        if not classification.supported:
+            self._discard(target)
+            logger.info(
+                "document_rejected_non_financial",
+                filename=filename,
+                stage=classification.stage,
+                confidence=classification.confidence,
+            )
+            raise BadRequestError(UNSUPPORTED_MESSAGE)
+
         chunks = chunk_text(text)
 
         # Generate semantic embeddings for each chunk if Gemini is configured
@@ -194,6 +217,7 @@ class DocumentsService:
                     "num_chunks": len(chunks),
                     "file_hash": file_hash,
                     "chunks": chunks_data,
+                    **classification.to_metadata(filename),
                 },
             },
             actor_id=user_id,
@@ -203,8 +227,18 @@ class DocumentsService:
             document_id=str(document.id),
             size_bytes=len(content),
             chunks=len(chunks),
+            category=classification.category,
         )
         return document
+
+    @staticmethod
+    def _discard(path: Path) -> None:
+        """Remove a stored file whose document was never persisted."""
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError as exc:
+            logger.warning("document_file_cleanup_failed", path=str(path), error=str(exc))
 
     @staticmethod
     def _extract_text(path: Path, extension: str) -> str:
@@ -227,11 +261,28 @@ class DocumentsService:
             raise NotFoundError("Financial document not found.")
         return document
 
+    @staticmethod
+    def _require_finance_domain(document: FinancialDocument, metadata: dict[str, Any]) -> None:
+        """Keep retrieval inside the finance domain.
+
+        Ingestion never stores a non-financial document, so this only bites
+        on rows written before classification existed — those carry no
+        ``domain`` key and stay searchable rather than silently going dark.
+        """
+        domain = metadata.get("domain")
+        if domain is None:
+            logger.info("search_unclassified_document", document_id=str(document.id))
+            return
+        if domain != DOMAIN_FINANCE:
+            raise BadRequestError(UNSUPPORTED_MESSAGE)
+
     async def search(
         self, user_id: uuid.UUID, doc_id: uuid.UUID, query: str, limit: int = 5
     ) -> dict[str, Any]:
         document = await self.get_owned(user_id, doc_id)
-        chunks_meta = (document.metadata_json or {}).get("chunks", [])
+        metadata = document.metadata_json or {}
+        self._require_finance_domain(document, metadata)
+        chunks_meta = metadata.get("chunks", [])
 
         # Check if chunks have semantic embeddings
         has_embeddings = all("embedding" in c for c in chunks_meta) if chunks_meta else False
@@ -276,8 +327,4 @@ class DocumentsService:
         document = await self.get_owned(user_id, doc_id)
         file_path = Path(document.file_path)
         await self.financial.delete_document(user_id, doc_id)
-        try:
-            if file_path.is_file():
-                file_path.unlink()
-        except OSError as exc:
-            logger.warning("document_file_cleanup_failed", path=str(file_path), error=str(exc))
+        self._discard(file_path)

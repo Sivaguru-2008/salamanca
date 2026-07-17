@@ -50,15 +50,15 @@ export const LoanPage: React.FC = () => {
 
   const handleLoadSample = () => {
     setText(`LOAN AGREEMENT AND TERM SHEET
-Lender: QuickCapital Payday Services
+Lender: QuickCapital Instant Cash Services
 Borrower: Guest User
-Principal Loan Amount: $1,200.00
+Principal Loan Amount: ₹25,000.00
 Disbursement Date: 2026-07-16
 Maturity Date: 2026-08-16 (1 Month term)
-Interest Details: Flat interest charge of $288.00 due at maturity.
+Interest Details: Flat interest charge of ₹6,000.00 due at maturity.
 Equivalent annual percentage rate (APR): 240.0%
-Late Payment Terms: A penalty fee of $50.00 plus an additional 15% interest accrues weekly on any outstanding balances.
-Prepayment Penalty: Borrower may NOT pay back early unless the full contract interest of $288 is satisfied in full.
+Late Payment Terms: A penalty fee of ₹1,000.00 plus an additional 15% interest accrues weekly on any outstanding balances.
+Prepayment Penalty: Borrower may NOT pay back early unless the full contract interest of ₹6,000 is satisfied in full.
 Arbitration: Borrower agrees to settle any dispute via binding arbitration, waiving all rights to class action lawsuits.`);
   };
 
